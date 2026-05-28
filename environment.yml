@@ -1,0 +1,16 @@
+name: local_agents
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - fastapi=0.110*
+  - uvicorn=0.28*
+  - pydantic=2.6*
+  - requests=2.31*
+  - pip
+  - pip:
+    # Beautiful Soup for clean, light HTML text extraction in read_webpage
+    - beautifulsoup4==4.12.3
+    # OpenAI client library used to instantiate your local lemonade_client connection
+    - openai==1.14.1
