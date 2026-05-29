@@ -1,7 +1,6 @@
 # core_backend/main.py
 
 import json
-from datetime import datetime
 import requests
 from typing import Dict, List, Optional, Any, Union
 from fastapi import FastAPI, HTTPException
@@ -11,21 +10,24 @@ import uvicorn
 from openai import AsyncOpenAI
 import httpx
 from bs4 import BeautifulSoup
-
 from tools.schemas import MIDDLEWARE_TOOLS
-# Import your Lemonade client (Ensure you created core_backend/models/clients.py)
+import models.model_switcher
+
+#Setting up paths and model manager, don't forget to update your .env file.
+Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 
 
 AGENT_SYSTEM_PROMPT = """ You are a reasearch assitant your job is to find information and help users
 You should reason through problems and whenever possible fetch information from the internt or local files to verify and support your ideas, be consice but thorough.
-When searching the internet please search for some pages, then read them to gather more detailed information.
+Never guess when getting information, always use tools to search the internt. Genreally after searching the web, open a specific webpage to get more detailed information.
 
 CRITICAL INSTRUCTIONS FOR REASONING:
-Always enclose your internal thought process inside <think> and </think> tags. 
+Always enclose your internal thought process inside <tool_call> and <tool_call> tags. 
 Ensure there is a blank line before and after your thinking tags.
 Do not put tool calls inside your think tags."""
 
-
+# I don't love this bit but I was having issues with the clients.py and letting the internet know which port I host the model on isn't horrible. 
+# Eventually It'll go back though...
 engine_client = AsyncOpenAI(
 
     base_url="http://127.0.0.1:8081/v1", 
@@ -62,12 +64,17 @@ class OpenAIChatRequest(BaseModel):
 @app.get("/v1/models")
 async def list_models():
     """Populates model dropdowns in Open WebUI and IDE Extensions."""
-    return {
-        "object": "list",
-        "data": [
-            {"id": "Qwen MTP-with tools", "object": "model", "owned_by": "local-orchestrator"}
-        ]
-    }
+    model_data = []
+    
+    for model in Model_Managed.model_list.MODELS:
+        model_data.append({
+            "id": model.display_name,
+            "object": "model",
+            "owned_by": "local-orchestrator"
+        })
+        
+    # FastAPI automatically handles the JSON serialization
+    return {"object": "list", "data": model_data}
 
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
@@ -77,32 +84,27 @@ async def chat_completions(request: OpenAIChatRequest):
     Combines incoming IDE/UI tools with internal middleware web tools.
     """
     # Handle non-streaming requests (like Open WebUI Title Generation)
+    matching_model = next((m for m in Model_Managed.model_list.MODELS if m.display_name == request.model), None)
+    Model_Managed.start_server(request.model)
+    if not matching_model:
+        raise ValueError(f"Model '{request.model}' not found.") #Shouldn't happen since the UI only sends valid names.
+    
     if not request.stream:
         print("[LOG] Title generation (non-streaming) requested. Routing to model.")
         # Convert Pydantic history into native dictionaries
         initial_history = [m.model_dump(exclude_none=True) for m in request.messages]
+
+        #setting up various model logic You can change these models to match your setup in your .env file
         
+
         response = await engine_client.chat.completions.create(
-            model="default", 
+            model=matching_model.name, 
             messages=initial_history,
             stream=False,
             max_tokens=150
         )
         return response
-    # 1. Generate the dynamic temporal context
-    current_time = datetime.now().strftime("%A, %B %d, %Y %I:%M %p")
-    dynamic_system_prompt = f"{AGENT_SYSTEM_PROMPT}\n\nSystem Note: The current date and time is {current_time}."
 
-    # 2. Inject the dynamic prompt instead of the static one
-    if request.messages and request.messages[0].role == "system":
-        print("[LOG] Overwriting client system prompt with dynamic Agent Prompt.")
-        request.messages[0].content = dynamic_system_prompt
-    else:
-        print("[LOG] Injecting dynamic Agent Prompt at position 0.")
-        request.messages.insert(0, OpenAIMessage(
-            role="system",
-            content=dynamic_system_prompt
-        ))
     if request.messages and request.messages[0].role == "system":
         print("[LOG] Overwriting client system prompt with hardcoded Agent Prompt.")
         request.messages[0].content = AGENT_SYSTEM_PROMPT
@@ -126,15 +128,13 @@ async def chat_completions(request: OpenAIChatRequest):
     async def agent_loop(current_messages):
         try:
             print("[OUTBOUND] Dispatching to llama.cpp (Waiting for response...)")
-            
+            #Getting model responses and streaming it back to the UI
             response = await engine_client.chat.completions.create(
-                model="default", 
+                model=matching_model.name, 
                 messages=current_messages,
                 stream=True,
                 tools=combined_tools if combined_tools else None,
                 tool_choice="auto",
-                # THE BRAKES: This kills the runaway train. 
-                # If it tries to start a new turn (<|im_start|>) or end its thought, we kill the stream instantly.
                 stop=["<|im_end|>", "<|im_start|>", "<|endoftext|>"], 
                 max_tokens=2048, 
                 extra_body={"thinking_budget_tokens": 256}
@@ -202,14 +202,18 @@ async def chat_completions(request: OpenAIChatRequest):
                 except json.JSONDecodeError:
                     args_dict = {}
                     
+
+                #Tool execution logic. Runs tools
                 tool_result_content = ""
-                
                 if function_name == "search_web":
+                    
                     query = args_dict.get("query", "")
                     try:
                         searxng_url = "http://127.0.0.1:8080/search" 
-                        resp = requests.get(searxng_url, params={"q": query, "format": "json"}, timeout=10)
-                        results = resp.json().get("results", [])[:5] 
+                        async with httpx.AsyncClient() as async_client:
+                            # THE FIX: Removed 'httpx.' from the start of async_client
+                            resp = await async_client.get(searxng_url, params={"q": query, "format": "json"}, timeout=10.0)
+                                                    
                         if resp.status_code == 200:
                             results = resp.json().get("results", [])[:5] 
                             
@@ -217,14 +221,12 @@ async def chat_completions(request: OpenAIChatRequest):
                                 tool_result_content = "Search returned no results. Do not search again. Provide a final answer using your existing knowledge."
                                 print("[ACTION WARNING] Empty search results.")
                             else:
-                                # THE FIX: Convert raw JSON into a clean Markdown list for the LLM
                                 formatted_text = "Here are the search results:\n\n"
                                 for i, r in enumerate(results, 1):
                                     title = r.get('title', 'No Title')
                                     url = r.get('url', 'No URL')
                                     content = r.get('content', 'No summary available.')
                                     
-                                    # Create a highly readable Markdown structure
                                     formatted_text += f"### {i}. {title}\n"
                                     formatted_text += f"- **Source:** {url}\n"
                                     formatted_text += f"- **Snippet:** {content}\n\n"
@@ -238,7 +240,9 @@ async def chat_completions(request: OpenAIChatRequest):
                     url = args_dict.get("url", "")
                     try:
                         headers = {"User-Agent": "Mozilla/5.0"}
-                        resp = requests.get(url, headers=headers, timeout=10)
+                        async with httpx.AsyncClient() as async_client:
+                            # THE FIX: Removed 'httpx.' from the start of async_client
+                            resp = await async_client.get(url, headers=headers, timeout=10)
                         soup = BeautifulSoup(resp.text, "html.parser")
                         for s in soup(["script", "style", "nav", "footer"]): s.decompose()
                         tool_result_content = soup.get_text(separator="\n", strip=True)[:15000]
@@ -247,6 +251,17 @@ async def chat_completions(request: OpenAIChatRequest):
                 else:
                     tool_result_content = f"Unknown tool: {function_name}"
                 
+                #UI result return to user for verification:
+                ui_result = f"<details>\n<summary><b>Tool Result:</b></summary>\n\n{tool_result_content}\n</details>\n\n"
+
+                ui_result_chunk = {
+                    "id": "chatcmpl-middleware", # Use a standard-looking ID
+                    "object": "chat.completion.chunk",
+                    "model": "default",
+                    "choices": [{"index": 0, "delta": {"content": ui_result}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(ui_result_chunk)}\n\n"
+
                 current_messages.append({
                     "role": "assistant", 
                     "content": None, 
