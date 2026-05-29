@@ -17,9 +17,6 @@ Local Agents is a Python-based local orchestration project for running and switc
 - Conda (recommended; environment file provided)
 - Docker + Docker Compose
 - **`llama.cpp` (required)**, including `llama-server` executable
-- Optional API keys for cloud models:
-  - `GOOGLE_API_KEY`
-  - `OPENAI_API_KEY`
 
 ## Installation
 
@@ -38,6 +35,7 @@ Local Agents is a Python-based local orchestration project for running and switc
 3. **Configure environment files (`.env`)**
    - Copy `.env.example` to `.env`.
    - Update paths and model entries so they match your local system.
+   - Ensure the various model files match your mlikst
    - Ensure each model entry includes a valid `llama_server_path` pointing to your local `llama.cpp` `llama-server` binary.
 
 4. **Start local infrastructure**
@@ -62,4 +60,4 @@ Local Agents is a Python-based local orchestration project for running and switc
 ./start.ps1
 ```
 
-This script starts Docker services and then launches the Python backend command defined in the script.
+This script starts Docker services and then launches the Python backend command defined in the script. (Is currently non-functional. you'll need to run main.py and also docker compose up -d)
