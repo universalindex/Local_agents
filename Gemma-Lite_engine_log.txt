@@ -1,0 +1,118 @@
+[FLM]  Configuring NPU Power Mode to performance (flm default)
+[FLM]  Using user-specified port: 8081
+[FLM]  Loading model: C:\Users\Noah\Documents\flm\models\Gemma4-E4B-IT-NPU2
+[FLM]  Starting server on port 8081...
+[FLM]  WebServer started on port 8081 with 10 I/O threads
+[FLM]  Press Ctrl+C to stop.
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60256
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60258
+[TCP]  Read 155 bytes from socket
+[TCP]  Read 155 bytes from socket
+================================================
+================================================
+[⬇️ ]  [⬇️ ]  Incoming Request: GET
+Incoming Request: GET
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60259
+[TCP]  Read 155 bytes from socket
+================================================
+[⬇️ ]  Incoming Request: GET
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60260
+[TCP]  Read 155 bytes from socket
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60261
+================================================
+[⬇️ ]  Incoming Request: GET
+[TCP]  Read 155 bytes from socket
+================================================
+[⬇️ ]  Incoming Request: GET
+[LOG]  Time stamp: 23:22:54 05:29:2026[
+LOG]  [Time stamp: 23:22:54 05:29:2026LOG
+]  Time stamp: 23:22:54 05:29:2026[LOG]  
+Target: /v1/models
+[LOG]  [Target: /v1/models[
+LOG]  Target: /v1/models
+[LOG]  Version: 11[LOG[LOG]  Version: 11
+[LOG]  Version: 11
+
+]  LOG]  Time stamp: 23:22:54 05:29:2026Time stamp: 23:22:54 05:29:2026
+[LOG]  Target: /v1/models
+[[LOG]  Version: 11
+[LOG]  Keep-Alive: 1
+LOG]  Keep-Alive: 1
+[LOG]  Keep-Alive: 1
+[
+[🔴 ]  Client disconnected; cancelling active request
+LOG[🔴 ]  Client disconnected; cancelling active request[
+[LOG]  Target: /v1/models
+[LOG]  Version: 11
+🔴 ]  [LOG================================================]  
+Keep-Alive: 1
+================================================
+Client disconnected; cancelling active request
+]  Keep-Alive: 1
+================================================
+[🔴 ]  Client disconnected; cancelling active request
+================================================
+[🔒 ]  TCP connection closed - Remote: 127.0.0.1:60260
+[🔒 ]  TCP connection closed - Remote: 127.0.0.1:60258
+[🔒 ]  TCP connection closed - Remote: 127.0.0.1:60259
+================================================
+[🔒 ]  TCP connection closed - Remote: 127.0.0.1:60261
+[🔒 ]  TCP connection closed - Remote: 127.0.0.1:60256
+[🔗 ]  TCP connection established - Remote: 127.0.0.1:60262
+[TCP]  Read 2172 bytes from socket
+================================================
+[⬇️ ]  Incoming Request: POST
+[LOG]  Time stamp: 23:22:54 05:29:2026
+[LOG]  Target: /v1/chat/completions
+[LOG]  Version: 11
+[LOG]  Keep-Alive: 1
+[LOG]  Body: 
+{
+    "max_tokens": 2048,
+    "messages": [
+        {
+            "content": " You are a...hink tags.",
+            "role": "system"
+        },
+        {
+            "content": "Testing 123",
+            "role": "user"
+        }
+    ],
+    "model": "gemma4-it:e4b",
+    "stop": [
+        "<|im_end|>",
+        "<|im_start|>",
+        "<|endoftext|>"
+    ],
+    "stream": true,
+    "thinking_budget_tokens": 256,
+    "tool_choice": "auto",
+    "tools": "..."
+}
+[🟢 ]  NPU Locked!
+FLM current_messages: 
+[
+    {
+        "role": "system",
+        "content": " You are a reasearch assitant your job is to find information and help users\nYou should reason through problems and whenever possible fetch information from the internt or local files to verify and support your ideas, Always be consice but thorough.\nNever guess when getting information, always use tools to search the internt. Genreally after searching the web, open one specific webpage to get more detailed information.\n\nCRITICAL INSTRUCTIONS FOR REASONING:\nAlways enclose your internal thought process inside <tool_call> and <tool_call> tags. \nEnsure there is a blank line before and after your thinking tags.\nDo not put tool calls inside your think tags."
+    },
+    {
+        "role": "user",
+        "content": "Testing 123"
+    }
+]
+[FLM]  Start prefill...
+[FLM]  Total images: 0
+[FLM]  Prefill chunk 1/1 with 310 tokens
+[31m[FLM]  Checkpointing context, current context length: 310[0m
+[FLM]  Start generating...
+
+[FLM]  Model RAW Output: 
+Hello! I see you've typed "Testing 123." Is there something specific you would like me to test or any information you are looking for?
+
+Please let me know how I can assist you, whether it's a research question, a creative writing prompt, a coding task, or anything else!
+[31m[FLM]  Checkpointing context, current context length: 376[0m
+ChatCompletionChunk: {"id":"chatcmpl-765e13f96d2cef78db9a6b51","object":"chat.completion.chunk","created":1780118574,"model":"gemma4-it:e4b","system_fingerprint":"fp_9ce99f378d13177f","choices":[{"index":0,"delta":{"content":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":310,"completion_tokens":65,"total_tokens":375,"active_kv_tokens":375,"max_kv_token_capacity":32768,"kv_token_occupancy_rate_percentage":1.1444091796875,"load_duration":6e-07,"prefill_duration_ttft":1.630224,"decoding_duration":5.484809,"prefill_speed_tps":190.1579169488365,"decoding_speed_tps":11.850914042767943}}
+[🔒 ]  Closing TCP connection (streaming, non-keep-alive)
+[🔵 ]  NPU Lock Released!

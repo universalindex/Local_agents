@@ -1,6 +1,7 @@
 # core_backend/main.py
 
 import json
+from contextlib import asynccontextmanager
 import requests
 from typing import Dict, List, Optional, Any, Union
 from fastapi import FastAPI, HTTPException
@@ -12,14 +13,15 @@ import httpx
 from bs4 import BeautifulSoup
 from tools.schemas import MIDDLEWARE_TOOLS
 import models.model_switcher
+import asyncio
 
 #Setting up paths and model manager, don't forget to update your .env file.
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 
 
 AGENT_SYSTEM_PROMPT = """ You are a reasearch assitant your job is to find information and help users
-You should reason through problems and whenever possible fetch information from the internt or local files to verify and support your ideas, be consice but thorough.
-Never guess when getting information, always use tools to search the internt. Genreally after searching the web, open a specific webpage to get more detailed information.
+You should reason through problems and whenever possible fetch information from the internt or local files to verify and support your ideas, Always be consice but thorough.
+Never guess when getting information, always use tools to search the internt. Genreally after searching the web, open one specific webpage to get more detailed information.
 
 CRITICAL INSTRUCTIONS FOR REASONING:
 Always enclose your internal thought process inside <tool_call> and <tool_call> tags. 
@@ -34,7 +36,16 @@ engine_client = AsyncOpenAI(
     api_key="sk-no-key-required",
     max_retries=0
 )
-app = FastAPI(title="Local AI Orchestrator Sidecar Proxy")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Setup Phase: Everything before 'yield' runs when the server boots.
+    # We do nothing here because your VramModelManager already runs a zombie sweep on init.
+    yield
+    
+    # Teardown Phase: Everything after 'yield' runs when the server receives a shutdown signal.
+    print("\n[Lifecycle] FastAPI shutting down. Executing NPU eviction protocol...")
+    Model_Managed.stop_active_server()
+app = FastAPI(title="Local AI Orchestrator Sidecar Proxy", lifespan=lifespan)
 logs = True
 # ==========================================
 # Data Contracts (OpenAI Spec Pydantic Models)
@@ -85,7 +96,15 @@ async def chat_completions(request: OpenAIChatRequest):
     """
     # Handle non-streaming requests (like Open WebUI Title Generation)
     matching_model = next((m for m in Model_Managed.model_list.MODELS if m.display_name == request.model), None)
-    Model_Managed.start_server(request.model)
+    await asyncio.to_thread(Model_Managed.start_server, request.model)
+    health_url = f"http://127.0.0.1:8081/v1/models"
+    for _ in range(300): # 5 minute wait
+        try:
+            async with httpx.AsyncClient() as client:
+                if (await client.get(health_url, timeout=1.0)).status_code == 200:
+                    break
+        except:
+            await asyncio.sleep(1.0)
     if not matching_model:
         raise ValueError(f"Model '{request.model}' not found.") #Shouldn't happen since the UI only sends valid names.
     
@@ -282,4 +301,4 @@ async def chat_completions(request: OpenAIChatRequest):
     return StreamingResponse(agent_loop(initial_history), media_type="text/event-stream")
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

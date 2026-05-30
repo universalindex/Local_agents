@@ -9,13 +9,15 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class LocalModel(BaseModel):
     name: str
     display_name: str
     path: str
     mmproj: str | None = None  
-    llama_server_path: str
+    server_path: str
     special_arguments: str | None = None
+    engine: str
 
 class AppSettings(BaseSettings):
     MODELS: list[LocalModel]
@@ -82,59 +84,62 @@ class VramModelManager:
     def start_server(self, model_display_name: str):
         """Spawns a new server instance on the shared, unified port."""
         # Enforce single-server port availability by cleaning up first
+        
         if self.current_model_id == model_display_name:
             return
         else:
+
             self.stop_active_server()
             #Extract model path, name and mmproj from the model list based on the display name
             matching_model = next((m for m in self.model_list.MODELS if m.display_name == model_display_name), None)
+            print(f"1", flush=True)
             if not matching_model:
+                print(f"2", flush=True)
                 raise ValueError(f"Model with display name '{model_display_name}' not found.") #Shouldn't happen since the UI only sends valid names.
-            if not matching_model.llama_server_path:
+                
+            if not matching_model.server_path:
+                print(f"3", flush=True)
                 raise ValueError(f"Model '{model_display_name}' is missing a llama_server_path in the configuration.") #Also shouldn't happen
-            args_list = shlex.split(matching_model.special_arguments)
-
-            cmd = [
-                matching_model.llama_server_path,
-                "-m", matching_model.path,
-                "--port", str(self.backend_port)
-            ] + args_list
+            args_list = []
+            if matching_model.special_arguments:
+                args_list = shlex.split(matching_model.special_arguments)
+            
+            print(f"4", flush=True)
+            if matching_model.engine == "llama.cpp":
+                cmd = [
+                    matching_model.server_path,
+                    "-m", matching_model.path,
+                    "--port", str(self.backend_port)
+                ] + args_list
+            elif matching_model.engine == "Fast_flow":
+                cmd = [
+                    matching_model.server_path, "serve", matching_model.name,
+                    "-p", str(self.backend_port)
+                ]
             #Run the actuall commands so the server spins up
+            if matching_model.engine == "Fast_flow":
+                env = os.environ.copy()
+                env["FLM_DISABLE_UPDATE_CHECK"] = "1"
+            else:
+                env = None # Prevents an error when launching llama.cpp
+            print("Launching model")
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,  # Silences the logs
+                stderr=subprocess.DEVNULL,   # ADDED: Plugs the keyboard
+                env=env                     # ADDED: Passes the update blocker
             )
             
             self.current_model_id = matching_model.display_name
-            print(f"[Lifecycle] Launching: {' '.join(cmd)}")
+            print(f"[Lifecycle] Launching: {' '.join(cmd)}", flush=True)
             
-            health_url = f"http://127.0.0.1:{self.backend_port}/health"
+            health_url = f"http://127.0.0.1:{self.backend_port}/v1/models"
             start_time = time.time()
             
-            print(f"[VRAM] Allocating memory for {matching_model.display_name}. This may take a few minutes...")
+            print(f"[VRAM] Allocating memory for {matching_model.display_name}. This may take a few minutes...", flush=True)
 
-            while True:
-                try:
-                    with httpx.Client() as client:
-                        if client.get(health_url, timeout=1.0).status_code == 200:
-                            # THE FIX 2: Add a highly visible success banner
-                            print("\n" + "="*50)
-                            print(f"✅ [SUCCESS] {matching_model.display_name} is fully loaded and ready!")
-                            print("="*50 + "\n")
-                            break
-                except httpx.RequestError:
-                    pass
-                except KeyboardInterrupt:
-                    print("\n[ABORT] User pressed Ctrl+C. Shutting down server...")
-                    self.stop_active_server()
-                    raise
 
-                # THE FIX 3: Increase the timeout limit to 300 seconds (5 minutes)
-                if time.time() - start_time > 300:
-                    self.stop_active_server()
-                    raise RuntimeError(f"Model {matching_model.display_name} failed to initialize within 300s.")
-                time.sleep(1.0)
 
 #Makes the list of Models avalible
 MODEL_LIST = AppSettings()
