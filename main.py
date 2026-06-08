@@ -10,23 +10,32 @@ from pydantic import BaseModel
 import uvicorn
 from openai import AsyncOpenAI
 import httpx
+import time
 from bs4 import BeautifulSoup
 from tools.schemas import MIDDLEWARE_TOOLS
 import models.model_switcher
+import tools.cleaning
 import asyncio
 
 #Setting up paths and model manager, don't forget to update your .env file.
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 
 
-AGENT_SYSTEM_PROMPT = """ You are a reasearch assitant your job is to find information and help users
-You should reason through problems and whenever possible fetch information from the internt or local files to verify and support your ideas, Always be consice but thorough.
-Never guess when getting information, always use tools to search the internt. Genreally after searching the web, open one specific webpage to get more detailed information.
+AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
+- Outdated knowledge base. NO GUESSING.
+- MANDATORY: Use tools (`search_web`, `read_webpage`, `read_file`) to verify facts, syntax, and APIs.
+- Output style: Direct, concise, zero conversational fluff.
 
-CRITICAL INSTRUCTIONS FOR REASONING:
-Always enclose your internal thought process inside <tool_call> and <tool_call> tags. 
-Ensure there is a blank line before and after your thinking tags.
-Do not put tool calls inside your think tags."""
+[CODE GENERATION RULES]
+- STRICT PROHIBITION: NEVER use raw shell commands to edit files. Use file tools instead.
+- NO RE-INVENTIONS: DO NOT re-create standard library functions. Always utilize existing language utilities.
+
+[THINKING PROTOCOL]
+- All reasoning MUST be wrapped inside tags:
+<tool_call>
+[Reasoning here]
+</tool_call>
+- CRITICAL: Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags."""
 
 # I don't love this bit but I was having issues with the clients.py and letting the internet know which port I host the model on isn't horrible. 
 # Eventually It'll go back though...
@@ -55,6 +64,8 @@ class OpenAIMessage(BaseModel):
     role: str
     content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 class OpenAITool(BaseModel):
     type: str = "function"
@@ -81,6 +92,7 @@ async def list_models():
         model_data.append({
             "id": model.display_name,
             "object": "model",
+            "created": int(time.time()), # <-- This is the missing key the IDE requires
             "owned_by": "local-orchestrator"
         })
         
@@ -109,13 +121,12 @@ async def chat_completions(request: OpenAIChatRequest):
         raise ValueError(f"Model '{request.model}' not found.") #Shouldn't happen since the UI only sends valid names.
     
     if not request.stream:
-        print("[LOG] Title generation (non-streaming) requested. Routing to model.")
-        # Convert Pydantic history into native dictionaries
-        initial_history = [m.model_dump(exclude_none=True) for m in request.messages]
+        print("[LOG] Non-streaming request detected (Android Studio / Title Gen). Routing to model.")
+        # Convert Pydantic history into native dictionaries And clean bloat for safety and run speed
+        initial_history = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
 
         #setting up various model logic You can change these models to match your setup in your .env file
         
-
         response = await engine_client.chat.completions.create(
             model=matching_model.name, 
             messages=initial_history,
@@ -135,24 +146,21 @@ async def chat_completions(request: OpenAIChatRequest):
         ))
     # Merge tools provided by the IDE/Frontend with our local Web tools
     inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
-    combined_tools = inbound_tools + MIDDLEWARE_TOOLS
-    if logs == True:
-        print(f"[LOG] Total Available Tool Registry: {[t['function']['name'] for t in combined_tools]}")
     # Identify which tools our middleware must handle internally instead of passing back
     middleware_tool_names = [t["function"]["name"] for t in MIDDLEWARE_TOOLS]
-
+    combined_tools = inbound_tools + MIDDLEWARE_TOOLS
     # Convert Pydantic history into native dictionaries for recursion safety
     initial_history = [m.model_dump(exclude_none=True) for m in request.messages]
-
     async def agent_loop(current_messages):
         try:
-            print("[OUTBOUND] Dispatching to llama.cpp (Waiting for response...)")
+            print("[OUTBOUND] Dispatching to LLM server (Waiting for response...)")
+            current_messages = tools.cleaning.strip_ide_bloat(current_messages)
             #Getting model responses and streaming it back to the UI
             response = await engine_client.chat.completions.create(
                 model=matching_model.name, 
                 messages=current_messages,
                 stream=True,
-                tools=combined_tools if combined_tools else None,
+                tools = combined_tools,
                 tool_choice="auto",
                 stop=["<|im_end|>", "<|im_start|>", "<|endoftext|>"], 
                 max_tokens=2048, 
@@ -173,6 +181,9 @@ async def chat_completions(request: OpenAIChatRequest):
                 if delta.tool_calls:
                     is_tool_call = True
                     tool_chunk_buffer.append(chunk.model_dump_json())
+
+                    clean_tool_chunk = chunk.model_dump(exclude_none=True)
+                    tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
                     
                     tc = delta.tool_calls[0]
                     if tc.id: tool_call_id = tc.id
@@ -295,8 +306,9 @@ async def chat_completions(request: OpenAIChatRequest):
                 yield "data: [DONE]\n\n"
 
         except Exception as e:
-            error_payload = json.dumps({"choices": [{"delta": {"content": f"\n\nPipeline Error: {str(e)}"}}]})
+            error_payload = json.dumps({"choices": [{"index": 0, "delta": {"content": f"\n\nPipeline Error: {str(e)}"}}]})
             yield f"data: {error_payload}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(agent_loop(initial_history), media_type="text/event-stream")
 
