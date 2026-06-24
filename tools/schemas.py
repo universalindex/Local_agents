@@ -78,3 +78,20 @@ MIDDLEWARE_TOOLS =[
     }
 
 ] 
+
+ALLOWED_TOOLS = {
+    # Core File IO
+    "read_file", "write_file", 
+    
+    # Targeted Navigation
+    "find_files", "code_search", 
+    
+    # Strict Code Intelligence
+    "resolve_symbol", "find_usages",
+    
+    # Live Verification
+    "search_web", "read_webpage",
+    
+    # Runtime Debugging
+    "gradle_build", "read_logcat"
+}

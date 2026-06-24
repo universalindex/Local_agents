@@ -120,7 +120,8 @@ class VramModelManager:
                 cmd = [
                     matching_model.server_path,
                     "-m", matching_model.path,
-                    "--port", str(self.backend_port)
+                    "--port", str(self.backend_port),
+                    "--alias", matching_model.name,
                 ] + args_list
             elif matching_model.engine == "Fast_flow":
                 cmd = [
@@ -138,13 +139,14 @@ class VramModelManager:
             self.process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,  # Silences the logs
-                stderr=subprocess.DEVNULL,   # ADDED: Plugs the keyboard
+                stdout=None,  # Silences the logs
+                stderr=None,   # ADDED: Plugs the keyboard
                 env=env                     # ADDED: Passes the update blocker
             )
             print("[LOG] Holding proxy pipeline. Waiting for FastFlowLM NPU allocation...")
             api_base = f"http://127.0.0.1:{self.backend_port}"
             print(f"[VRAM] Allocating memory for {matching_model.display_name}. This may take a few minutes...", flush=True)
+            print(f"[Lifecycle] Launching: {' '.join(cmd)}", flush=True)
             for _ in range(120):
                 try:
                     req = urllib.request.Request(f"{api_base}/v1/models")
@@ -161,7 +163,7 @@ class VramModelManager:
                 
                 time.sleep(1)
                 self.current_model_id = matching_model.display_name
-                print(f"[Lifecycle] Launching: {' '.join(cmd)}", flush=True)
+                
                 
                 health_url = f"http://127.0.0.1:{self.backend_port}/v1/models"
                 start_time = time.time()

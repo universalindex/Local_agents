@@ -21,10 +21,11 @@ import asyncio
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 
 
-AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
+AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
 - Outdated knowledge base. NO GUESSING.
 - MANDATORY: Use tools (`search_web`, `read_webpage`, `read_file`) to verify facts, syntax, and APIs.
 - Output style: Direct, concise, zero conversational fluff.
+- Upon request make lots of tool requests, however otherwise only use one or two.
 
 [CODE GENERATION RULES]
 - STRICT PROHIBITION: NEVER use raw shell commands to edit files. Use file tools instead.
@@ -120,10 +121,16 @@ async def chat_completions(request: OpenAIChatRequest):
     if not matching_model:
         raise ValueError(f"Model '{request.model}' not found.") #Shouldn't happen since the UI only sends valid names.
     
+    initial_history, Android_stuido = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
+    inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
+    #Clean out android studio tools if it's android studio. Otherwise passes through
+    if Android_stuido:
+        inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
+    #Remove token clogging from android studio 
     if not request.stream:
         print("[LOG] Non-streaming request detected (Android Studio / Title Gen). Routing to model.")
         # Convert Pydantic history into native dictionaries And clean bloat for safety and run speed
-        initial_history = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
+        
 
         #setting up various model logic You can change these models to match your setup in your .env file
         
@@ -145,16 +152,15 @@ async def chat_completions(request: OpenAIChatRequest):
             content=AGENT_SYSTEM_PROMPT
         ))
     # Merge tools provided by the IDE/Frontend with our local Web tools
-    inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
+
     # Identify which tools our middleware must handle internally instead of passing back
     middleware_tool_names = [t["function"]["name"] for t in MIDDLEWARE_TOOLS]
     combined_tools = inbound_tools + MIDDLEWARE_TOOLS
     # Convert Pydantic history into native dictionaries for recursion safety
-    initial_history = [m.model_dump(exclude_none=True) for m in request.messages]
     async def agent_loop(current_messages):
         try:
             print("[OUTBOUND] Dispatching to LLM server (Waiting for response...)")
-            current_messages = tools.cleaning.strip_ide_bloat(current_messages)
+            current_messages, Android_studio = tools.cleaning.strip_ide_bloat(current_messages)
             #Getting model responses and streaming it back to the UI
             response = await engine_client.chat.completions.create(
                 model=matching_model.name, 
@@ -180,8 +186,6 @@ async def chat_completions(request: OpenAIChatRequest):
                 # 1. Capture Tool Data
                 if delta.tool_calls:
                     is_tool_call = True
-                    tool_chunk_buffer.append(chunk.model_dump_json())
-
                     clean_tool_chunk = chunk.model_dump(exclude_none=True)
                     tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
                     

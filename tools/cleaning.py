@@ -1,13 +1,36 @@
 from typing import Dict, List, Any
 
+
+
+import tools.schemas
+
+def filter_android_studio_tools(data):
+    if "tools" in data and isinstance(data["tools"], list):
+        original_tools = data["tools"]
+        
+        # Keep only the whitelisted development and verification tools
+        cleaned_tools = [
+            t for t in original_tools 
+            if t.get("function", {}).get("name") in tools.schemas.ALLOWED_TOOLS
+        ]
+        
+        removed_count = len(original_tools) - len(cleaned_tools)
+        
+        if removed_count > 0:
+            print(f"[ALERT] Stripped {removed_count} heavy internal tools. {len(cleaned_tools)} core tools passed.")
+            data["tools"] = cleaned_tools
+            
+    return data
+
+
 def strip_ide_bloat(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Translates Android Studio's unsupported 'developer' role to prevent C++ crashes,
     but allows ALL file dumps and IDE context to pass natively to the LLM.
     """
     clean_history = []
+    Android_studio = False
     extracted_ide_instructions = ""
-    
     for msg in history:
         role = msg.get("role", "")
         content = msg.get("content", "")
@@ -19,6 +42,7 @@ def strip_ide_bloat(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "- Output modern Kotlin and Jetpack Compose code matching project structure.\n"
                 "- Do not output full files unless requested; focus strictly on modifications."
             )
+            Android_studio = True
             continue # Skip adding the raw 'developer' message to the array
             
         # 2. KEEP ABSOLUTELY EVERYTHING ELSE
@@ -38,4 +62,4 @@ def strip_ide_bloat(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         
         clean_history[0]["content"] = unified_system_content
         
-    return clean_history
+    return clean_history, Android_studio
