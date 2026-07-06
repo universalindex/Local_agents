@@ -25,7 +25,7 @@ class LocalModel(BaseModel):
 
 class AppSettings(BaseSettings):
     MODELS: list[LocalModel]
-
+    pdf_directory: str
     # This line triggers the automatic JSON decoder!
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -139,8 +139,8 @@ class VramModelManager:
             self.process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=None,  # Silences the logs
-                stderr=None,   # ADDED: Plugs the keyboard
+                stdout=subprocess.DEVNULL,  # Silences the logs
+                stderr=subprocess.DEVNULL,   # ADDED: Plugs the keyboard
                 env=env                     # ADDED: Passes the update blocker
             )
             print("[LOG] Holding proxy pipeline. Waiting for FastFlowLM NPU allocation...")

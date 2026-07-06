@@ -16,27 +16,22 @@ from tools.schemas import MIDDLEWARE_TOOLS
 import models.model_switcher
 import tools.cleaning
 import asyncio
+import tools.tool_def
 
 #Setting up paths and model manager, don't forget to update your .env file.
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
+pdf_directory = models.model_switcher.AppSettings().pdf_directory
 
 
-AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
-- Outdated knowledge base. NO GUESSING.
-- MANDATORY: Use tools (`search_web`, `read_webpage`, `read_file`) to verify facts, syntax, and APIs.
-- Output style: Direct, concise, zero conversational fluff.
-- Upon request make lots of tool requests, however otherwise only use one or two.
+AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
+- Verify all infomation using tools provided. 
+- MANDATORY: Use tools (`search_web`, `read_webpage`, `search_pdfs`, `read_pdf_page`).
+- The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool.
+- CRITICAL: Tool arguments must strictly match required types.
+- For `read_pdf_page`, the `page_number` MUST be a single integer (e.g., 94). Do NOT write strings or ranges. Use this tool after the search tool
+- For search_pdf use one or two kekywords only.
+- Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags."""
 
-[CODE GENERATION RULES]
-- STRICT PROHIBITION: NEVER use raw shell commands to edit files. Use file tools instead.
-- NO RE-INVENTIONS: DO NOT re-create standard library functions. Always utilize existing language utilities.
-
-[THINKING PROTOCOL]
-- All reasoning MUST be wrapped inside tags:
-<tool_call>
-[Reasoning here]
-</tool_call>
-- CRITICAL: Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags."""
 
 # I don't love this bit but I was having issues with the clients.py and letting the internet know which port I host the model on isn't horrible. 
 # Eventually It'll go back though...
@@ -282,20 +277,43 @@ async def chat_completions(request: OpenAIChatRequest):
                         tool_result_content = soup.get_text(separator="\n", strip=True)[:15000]
                     except Exception as e:
                         tool_result_content = f"Webpage read failed: {str(e)}"
+
+
+                elif function_name == "search_pdfs" and not Android_studio:
+                    query = args_dict.get("query", "")
+                    try:
+                        # Offload disk I/O and fuzzy math to a background thread
+                        tool_result_content = await asyncio.to_thread(tools.tool_def.search_pdfs, query, pdf_directory)
+                    except Exception as e:
+                        tool_result_content = f"PDF search failed: {str(e)}"
+
+
+                elif function_name == "read_pdf_page" and not Android_studio:
+                    file_path = pdf_directory + "/" + args_dict.get("file_name", "")
+                    page_number = tools.tool_def.sanitize_page_number(args_dict.get("page_number", 0))
+                    try:
+                        tool_result_content = await asyncio.to_thread(tools.tool_def.read_pdf_page, file_path, page_number)
+                    except Exception as e:
+                        tool_result_content = f"PDF page read failed: {str(e)}"
                 else:
                     tool_result_content = f"Unknown tool: {function_name}"
                 
                 #UI result return to user for verification:
-                ui_result = f"<details>\n<summary><b>Tool Result:</b></summary>\n\n{tool_result_content}\n</details>\n\n"
+                # Pure Markdown alternative for collapsible blocks supported by Open WebUI
+                ui_result = (
+                f"<details>\n"
+                f"<summary><b>Tool Result: {function_name}</b></summary>\n\n"
+                f"{tool_result_content}\n\n"
+                f"</details>\n\n"
+                )
 
                 ui_result_chunk = {
-                    "id": "chatcmpl-middleware", # Use a standard-looking ID
+                    "id": "chatcmpl-middleware", 
                     "object": "chat.completion.chunk",
                     "model": "default",
                     "choices": [{"index": 0, "delta": {"content": ui_result}, "finish_reason": None}]
                 }
                 yield f"data: {json.dumps(ui_result_chunk)}\n\n"
-
                 current_messages.append({
                     "role": "assistant", 
                     "content": None, 

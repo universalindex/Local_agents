@@ -42,7 +42,36 @@ MIDDLEWARE_TOOLS =[
         }
 
     },
-
+    {
+    "type": "function",
+    "function": {
+        "name": "search_pdfs",
+        "description": "A keyword search to search the local files for ONE or TWO words. ALWAYS use the read PDF page afterwards to grab more information.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The exact text or keyword to search for."},
+            },
+            "required": ["query"]
+        }
+    }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "read_pdf_page",
+        "description": "After searching for relavent pages read the complete text from a single specific page of a the PDFs using this tool.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reasoning": {"type": "string", "description": "A brief explanation of why you are reading this page. This is for your own reasoning and will not be used by the model."},
+                "file_name": {"type": "string", "description": "The name of the PDF you're opening"},
+                "page_number": {"type": "integer", "description": "CRITICAL: The single whole number page to read (0-indexed). Do NOT pass anything other than a single whole number"}
+            },
+            "required": ["file_name", "page_number"]
+        }
+    }
+    },
     {
 
         "type": "function",

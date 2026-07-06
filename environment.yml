@@ -13,5 +13,5 @@ dependencies:
   - httpx
   - beautifulsoup4=4.12*
   - openai>=1.14.1
-  - pip
-  - asyncio
+  - rapidfuzz
+  - pymupdf
