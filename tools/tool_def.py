@@ -3,7 +3,7 @@ import re
 import fitz  # PyMuPDF
 import json
  
-DEBUG = True  # set False to silence [DEBUG] lines once things are working
+DEBUG = False  # set False to silence [DEBUG] lines once things are working
  
 _PDF_MEMORY_CACHE = None      # filename -> [page_text, page_text, ...] (0-indexed list)
 _CUSTOM_INDEX_CACHE = None    # keyword -> {"pages": [...], "see_also": [...], "subs": {...}}

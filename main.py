@@ -25,8 +25,8 @@ pdf_directory = models.model_switcher.AppSettings().pdf_directory
 
 AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
 - Verify all infomation using tools provided. 
-- MANDATORY: Use tools (`search_web`, `read_webpage`, `search_pdfs`, `read_pdf_page`).
-- The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool.
+- Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information
+- The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
 - CRITICAL: Tool arguments must strictly match required types.
 - For `read_pdf_page`, the `page_number` MUST be a single integer (e.g., 94). Do NOT write strings or ranges. Use this tool after the search tool
 - For search_pdf use one or two kekywords only.
@@ -279,7 +279,7 @@ async def chat_completions(request: OpenAIChatRequest):
                         tool_result_content = f"Webpage read failed: {str(e)}"
 
 
-                elif function_name == "search_pdfs" and not Android_studio:
+                elif function_name == "search_Pdfs" and not Android_studio:
                     query = args_dict.get("query", "")
                     try:
                         # Offload disk I/O and fuzzy math to a background thread
@@ -288,7 +288,7 @@ async def chat_completions(request: OpenAIChatRequest):
                         tool_result_content = f"PDF search failed: {str(e)}"
 
 
-                elif function_name == "read_pdf_page" and not Android_studio:
+                elif function_name == "read_Pdf_page" and not Android_studio:
                     file_path = pdf_directory + "/" + args_dict.get("file_name", "")
                     page_number = tools.tool_def.sanitize_page_number(args_dict.get("page_number", 0))
                     try:

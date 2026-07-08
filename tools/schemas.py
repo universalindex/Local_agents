@@ -45,7 +45,7 @@ MIDDLEWARE_TOOLS =[
     {
     "type": "function",
     "function": {
-        "name": "search_pdfs",
+        "name": "search_Pdfs",
         "description": "A keyword search to search the local files for ONE or TWO words. ALWAYS use the read PDF page afterwards to grab more information.",
         "parameters": {
             "type": "object",
@@ -59,7 +59,7 @@ MIDDLEWARE_TOOLS =[
     {
     "type": "function",
     "function": {
-        "name": "read_pdf_page",
+        "name": "read_Pdf_page",
         "description": "After searching for relavent pages read the complete text from a single specific page of a the PDFs using this tool.",
         "parameters": {
             "type": "object",

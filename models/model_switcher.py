@@ -127,7 +127,7 @@ class VramModelManager:
                 cmd = [
                     "flm", "serve", matching_model.name,
                     "-p", str(self.backend_port),
-                    "--ctx-len", "32768"
+                    "--ctx-len", "131072"
                 ] 
             #Run the actuall commands so the server spins up     
             if matching_model.engine == "Fast_flow":
