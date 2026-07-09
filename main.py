@@ -78,23 +78,6 @@ class OpenAIChatRequest(BaseModel):
 # API Endpoints
 # ==========================================
 
-@app.get("/models")
-@app.get("/v1/models")
-async def list_models():
-    """Populates model dropdowns in Open WebUI and IDE Extensions."""
-    model_data = []
-    
-    for model in Model_Managed.model_list.MODELS:
-        model_data.append({
-            "id": model.display_name,
-            "object": "model",
-            "created": int(time.time()), # <-- This is the missing key the IDE requires
-            "owned_by": "local-orchestrator"
-        })
-        
-    # FastAPI automatically handles the JSON serialization
-    return {"object": "list", "data": model_data}
-
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 async def chat_completions(request: OpenAIChatRequest):
@@ -102,9 +85,21 @@ async def chat_completions(request: OpenAIChatRequest):
     The Universal Proxy Router.
     Combines incoming IDE/UI tools with internal middleware web tools.
     """
-    # Handle non-streaming requests (like Open WebUI Title Generation)
-    matching_model = next((m for m in Model_Managed.model_list.MODELS if m.display_name == request.model), None)
-    await asyncio.to_thread(Model_Managed.start_server, request.model)
+    # 1. NEW: Clean bloat and detect IDEs first before looking up the model
+    initial_history, Android_studio = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
+    inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
+    
+    is_vs_code_ide = request.model.endswith("-ide")
+    is_ide_request = is_vs_code_ide or Android_studio
+
+    # 2. NEW: Strip "-ide" to find the real model in your manager
+    target_model_name = request.model.replace("-ide", "")
+    
+    matching_model = next((m for m in Model_Managed.model_list.MODELS if m.display_name == target_model_name), None)
+    if not matching_model:
+        raise ValueError(f"Model '{target_model_name}' not found.") 
+        
+    await asyncio.to_thread(Model_Managed.start_server, target_model_name)
     health_url = f"http://127.0.0.1:8081/v1/models"
     for _ in range(300): # 5 minute wait
         try:
@@ -113,22 +108,10 @@ async def chat_completions(request: OpenAIChatRequest):
                     break
         except:
             await asyncio.sleep(1.0)
-    if not matching_model:
-        raise ValueError(f"Model '{request.model}' not found.") #Shouldn't happen since the UI only sends valid names.
-    
-    initial_history, Android_stuido = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
-    inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
-    #Clean out android studio tools if it's android studio. Otherwise passes through
-    if Android_stuido:
-        inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
-    #Remove token clogging from android studio 
+            
+    # 3. EXISTING: Handle non-streaming requests
     if not request.stream:
-        print("[LOG] Non-streaming request detected (Android Studio / Title Gen). Routing to model.")
-        # Convert Pydantic history into native dictionaries And clean bloat for safety and run speed
-        
-
-        #setting up various model logic You can change these models to match your setup in your .env file
-        
+        print("[LOG] Non-streaming request detected. Routing to model.")
         response = await engine_client.chat.completions.create(
             model=matching_model.name, 
             messages=initial_history,
@@ -137,11 +120,39 @@ async def chat_completions(request: OpenAIChatRequest):
         )
         return response
 
+    # 4. NEW: IDE Direct Passthrough (Bypasses Agent Loop)
+    if is_ide_request:
+        print(f"[LOG] Direct IDE Passthrough Route triggered for: {matching_model.name}")
+        if Android_studio:
+            print("[LOG] Trimming Android Studio native tools down to save NPU context.")
+            inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
+
+        async def ide_passthrough():
+            try:
+                response_stream = await engine_client.chat.completions.create(
+                    model=matching_model.name,
+                    messages=initial_history,
+                    tools=inbound_tools if inbound_tools else None,
+                    stream=True,
+                    temperature=0.5,
+                    max_tokens=2048
+                )
+                async for chunk in response_stream:
+                    yield f"data: {json.dumps(chunk.model_dump(exclude_none=True))}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                error_payload = json.dumps({"choices": [{"index": 0, "delta": {"content": f"\n\nIDE Stream Error: {str(e)}"}}]})
+                yield f"data: {error_payload}\n\n"
+                yield "data: [DONE]\n\n"
+
+        # The return here ensures IDEs NEVER hit the custom prompt injection below!
+        return StreamingResponse(ide_passthrough(), media_type="text/event-stream")
     if request.messages and request.messages[0].role == "system":
-        print("[LOG] Overwriting client system prompt with hardcoded Agent Prompt.")
-        request.messages[0].content = AGENT_SYSTEM_PROMPT
+        if request.messages[0].content != AGENT_SYSTEM_PROMPT:
+            print("[LOG] Updating system prompt content to match hardcoded Agent Prompt.")
+            request.messages[0].content = AGENT_SYSTEM_PROMPT
     else:
-        print("[LOG] Injecting hardcoded Agent Prompt at position 0.")
+        print("[LOG] No system prompt found at index 0. Injecting hardcoded Agent Prompt.")
         request.messages.insert(0, OpenAIMessage(
             role="system",
             content=AGENT_SYSTEM_PROMPT

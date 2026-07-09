@@ -11,7 +11,7 @@ Start-Sleep -Seconds 3
 Write-Host "=== Starting AI Middleware ===" -ForegroundColor Cyan
 # 3. Activate your environment and start the Python server
 # Notice we don't detach this one, so your terminal still sees all the FastAPI logs
-conda run -n local_agents python core_backend/main.py
+conda run -n local_agents python main.py
 
 # 4. Cleanup (This only runs AFTER you press Ctrl+C to kill the Python server)
 Write-Host "=== Shutting Down Infrastructure ===" -ForegroundColor Yellow
