@@ -23,7 +23,7 @@ Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MOD
 pdf_directory = models.model_switcher.AppSettings().pdf_directory
 
 
-AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
+AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
 - Verify all infomation using tools provided. 
 - Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information
 - The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
@@ -77,6 +77,24 @@ class OpenAIChatRequest(BaseModel):
 # ==========================================
 # API Endpoints
 # ==========================================
+
+@app.get("/models")
+@app.get("/v1/models")
+async def list_models():
+    """Populates model dropdowns in Open WebUI and IDE Extensions."""
+    model_data = []
+    
+    for model in Model_Managed.model_list.MODELS:
+        model_data.append({
+            "id": model.display_name,
+            "object": "model",
+            "created": int(time.time()), # <-- This is the missing key the IDE requires
+            "owned_by": "local-orchestrator"
+        })
+        
+    # FastAPI automatically handles the JSON serialization
+    return {"object": "list", "data": model_data}
+
 
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
