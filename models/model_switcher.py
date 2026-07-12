@@ -87,35 +87,29 @@ class VramModelManager:
             self.current_model_id = None
 
     def start_server(self, model_display_name: str):
-        """Spawns a new server instance on the shared, unified port."""
-        # Enforce single-server port availability by cleaning up first
         matching_model = next((m for m in self.model_list.MODELS if m.display_name == model_display_name), None)
         with self.launch_lock:
             try:
-                # If this ping succeeds, the engine is already awake. Skip the launch!
                 req = urllib.request.Request(f"http://127.0.0.1:{self.backend_port}/v1/models")
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.getcode() == 200 and self.current_model_id == model_display_name:
                         print("[LOG] Engine is already running. Bypassing launch.")
-                        return 
+                        return
             except Exception as e:
                 print(f"\n[DIAGNOSTIC] Bypass ping failed! Reason: {type(e).__name__} - {str(e)}")
                 pass
-            
+
             self.stop_active_server()
-            #Extract model path, name and mmproj from the model list based on the display name
-            
+
             if not matching_model:
-                
-                raise ValueError(f"Model with display name '{model_display_name}' not found.") #Shouldn't happen since the UI only sends valid names.
-                
+                raise ValueError(f"Model with display name '{model_display_name}' not found.")
             if not matching_model.server_path:
-                
-                raise ValueError(f"Model '{model_display_name}' is missing a llama_server_path in the configuration.") #Also shouldn't happen
+                raise ValueError(f"Model '{model_display_name}' is missing a llama_server_path in the configuration.")
+
             args_list = []
             if matching_model.special_arguments:
                 args_list = shlex.split(matching_model.special_arguments)
-            
+
             if matching_model.engine == "llama.cpp":
                 cmd = [
                     matching_model.server_path,
@@ -128,45 +122,54 @@ class VramModelManager:
                     "flm", "serve", matching_model.name,
                     "-p", str(self.backend_port),
                     "--ctx-len", "131072"
-                ] 
-            #Run the actuall commands so the server spins up     
+                ]
+
             if matching_model.engine == "Fast_flow":
-                env = os.environ.copy()  
+                env = os.environ.copy()
                 env["FLM_DISABLE_UPDATE_CHECK"] = "1"
             else:
-                env = None # Prevents an error when launching llama.cpp
+                env = None
+
             print("Launching model")
+
+            # FIX: isolate the child in its own process group on Windows so Ctrl+C
+            # (CTRL_C_EVENT) in the console doesn't hit it directly. We now own its
+            # entire lifecycle explicitly via stop_active_server()/psutil, instead of
+            # racing against the OS delivering the same signal to both processes.
+            popen_kwargs = {}
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
             self.process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,  # Silences the logs
-                stderr=subprocess.DEVNULL,   # ADDED: Plugs the keyboard
-                env=env                     # ADDED: Passes the update blocker
+                stdout=None,
+                stderr=None,
+                text=True,
+                env=env,
+                **popen_kwargs
             )
+
             print("[LOG] Holding proxy pipeline. Waiting for FastFlowLM NPU allocation...")
             api_base = f"http://127.0.0.1:{self.backend_port}"
             print(f"[VRAM] Allocating memory for {matching_model.display_name}. This may take a few minutes...", flush=True)
             print(f"[Lifecycle] Launching: {' '.join(cmd)}", flush=True)
+
             for _ in range(120):
                 try:
                     req = urllib.request.Request(f"{api_base}/v1/models")
-                    with urllib.request.urlopen(req, timeout=10)as response:
+                    with urllib.request.urlopen(req, timeout=10) as response:
                         if response.getcode() == 200:
                             data = json.loads(response.read().decode())
-                            # Once the model ID shows up in the array, the black box is ready
                             if any(m.get("id") == matching_model.name for m in data.get("data", [])):
                                 print("[LOG] FastFlowLM reporting healthy! Releasing proxy hold.")
                                 self.current_model_id = matching_model.display_name
                                 break
                 except Exception:
-                    pass # Engine port is either dead or returning a 503 loading error
-                
+                    pass
+
                 time.sleep(1)
                 self.current_model_id = matching_model.display_name
-                
-                
-                health_url = f"http://127.0.0.1:{self.backend_port}/v1/models"
-                start_time = time.time()
                 
             
 

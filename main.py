@@ -74,6 +74,7 @@ class OpenAIChatRequest(BaseModel):
     tools: Optional[List[OpenAITool]] = None
     tool_choice: Optional[Any] = None
 
+generation_lock = asyncio.Lock()
 # ==========================================
 # API Endpoints
 # ==========================================
@@ -99,72 +100,65 @@ async def list_models():
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 async def chat_completions(request: OpenAIChatRequest):
-    """
-    The Universal Proxy Router.
-    Combines incoming IDE/UI tools with internal middleware web tools.
-    """
-    # 1. NEW: Clean bloat and detect IDEs first before looking up the model
-    initial_history, Android_studio = tools.cleaning.strip_ide_bloat([m.model_dump(exclude_none=True) for m in request.messages])
+    initial_history, Android_studio = tools.cleaning.strip_ide_bloat(
+        [m.model_dump(exclude_none=True) for m in request.messages]
+    )
     inbound_tools = [t.model_dump(exclude_none=True) for t in request.tools] if request.tools else []
-    
-    is_vs_code_ide = request.model.endswith("-ide")
-    is_ide_request = is_vs_code_ide or Android_studio
 
-    # 2. NEW: Strip "-ide" to find the real model in your manager
+    is_vs_code_ide = request.model.endswith("-ide")
+    is_ide_request = is_vs_code_ide
+
     target_model_name = request.model.replace("-ide", "")
-    
     matching_model = next((m for m in Model_Managed.model_list.MODELS if m.display_name == target_model_name), None)
     if not matching_model:
-        raise ValueError(f"Model '{target_model_name}' not found.") 
-        
-    await asyncio.to_thread(Model_Managed.start_server, target_model_name)
-    health_url = f"http://127.0.0.1:8081/v1/models"
-    for _ in range(300): # 5 minute wait
-        try:
-            async with httpx.AsyncClient() as client:
-                if (await client.get(health_url, timeout=1.0)).status_code == 200:
-                    break
-        except:
-            await asyncio.sleep(1.0)
-            
-    # 3. EXISTING: Handle non-streaming requests
+        raise ValueError(f"Model '{target_model_name}' not found.")
+
+    async with generation_lock:
+        await asyncio.to_thread(Model_Managed.start_server, target_model_name)
+        health_url = f"http://127.0.0.1:8081/v1/models"
+        for _ in range(300):
+            try:
+                async with httpx.AsyncClient() as client:
+                    if (await client.get(health_url, timeout=1.0)).status_code == 200:
+                        break
+            except:
+                await asyncio.sleep(1.0)
+
     if not request.stream:
         print("[LOG] Non-streaming request detected. Routing to model.")
-        response = await engine_client.chat.completions.create(
-            model=matching_model.name, 
-            messages=initial_history,
-            stream=False,
-            max_tokens=150
-        )
+        async with generation_lock:
+            response = await engine_client.chat.completions.create(
+                model=matching_model.name,
+                messages=initial_history,
+                stream=False,
+                max_tokens=150
+            )
         return response
-
-    # 4. NEW: IDE Direct Passthrough (Bypasses Agent Loop)
+    if Android_studio:
+        print("[LOG] Trimming Android Studio native tools down to save NPU context.")
+        inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
     if is_ide_request:
         print(f"[LOG] Direct IDE Passthrough Route triggered for: {matching_model.name}")
-        if Android_studio:
-            print("[LOG] Trimming Android Studio native tools down to save NPU context.")
-            inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
-
         async def ide_passthrough():
             try:
-                response_stream = await engine_client.chat.completions.create(
-                    model=matching_model.name,
-                    messages=initial_history,
-                    tools=inbound_tools if inbound_tools else None,
-                    stream=True,
-                    temperature=0.5,
-                    max_tokens=2048
-                )
-                async for chunk in response_stream:
-                    yield f"data: {json.dumps(chunk.model_dump(exclude_none=True))}\n\n"
+                async with generation_lock:
+                    response_stream = await engine_client.chat.completions.create(
+                        model=matching_model.name,
+                        messages=initial_history,
+                        tools=inbound_tools if inbound_tools else None,
+                        stream=True,
+                        temperature=0.5,
+                        max_tokens=2048
+                    )
+                    async for chunk in response_stream:
+                        yield f"data: {json.dumps(chunk.model_dump(exclude_none=True))}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
                 error_payload = json.dumps({"choices": [{"index": 0, "delta": {"content": f"\n\nIDE Stream Error: {str(e)}"}}]})
                 yield f"data: {error_payload}\n\n"
                 yield "data: [DONE]\n\n"
-
-        # The return here ensures IDEs NEVER hit the custom prompt injection below!
         return StreamingResponse(ide_passthrough(), media_type="text/event-stream")
+
     if request.messages and request.messages[0].role == "system":
         if request.messages[0].content != AGENT_SYSTEM_PROMPT:
             print("[LOG] Updating system prompt content to match hardcoded Agent Prompt.")
@@ -175,106 +169,90 @@ async def chat_completions(request: OpenAIChatRequest):
             role="system",
             content=AGENT_SYSTEM_PROMPT
         ))
-    # Merge tools provided by the IDE/Frontend with our local Web tools
 
-    # Identify which tools our middleware must handle internally instead of passing back
+    # Rebuild history for the agent path only, now that the system prompt mutation
+    # above has actually happened. `initial_history` up top was snapshotted before
+    # this mutation, so agent_loop was silently running with no system prompt.
+    agent_history, Android_studio = tools.cleaning.strip_ide_bloat(
+        [m.model_dump(exclude_none=True) for m in request.messages]
+    )
+
     middleware_tool_names = [t["function"]["name"] for t in MIDDLEWARE_TOOLS]
     combined_tools = inbound_tools + MIDDLEWARE_TOOLS
-    # Convert Pydantic history into native dictionaries for recursion safety
-    async def agent_loop(current_messages):
+
+    async def agent_loop(current_messages, android_studio):
         try:
             print("[OUTBOUND] Dispatching to LLM server (Waiting for response...)")
-            current_messages, Android_studio = tools.cleaning.strip_ide_bloat(current_messages)
-            #Getting model responses and streaming it back to the UI
-            response = await engine_client.chat.completions.create(
-                model=matching_model.name, 
-                messages=current_messages,
-                stream=True,
-                tools = combined_tools,
-                tool_choice="auto",
-                stop=["<|im_end|>", "<|im_start|>", "<|endoftext|>"], 
-                max_tokens=2048, 
-                extra_body={"thinking_budget_tokens": 256}
-            )
 
-            tool_call_id, function_name, function_args = None, "", ""
-            is_tool_call = False
-            tool_chunk_buffer = []
+            async with generation_lock:
+                response = await engine_client.chat.completions.create(
+                    model=matching_model.name,
+                    messages=current_messages,
+                    stream=True,
+                    tools=combined_tools,
+                    tool_choice="auto",
+                    stop=["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
+                    max_tokens=2048,
+                    extra_body={"thinking_budget_tokens": 256}
+                )
 
-            async for chunk in response:
-                if not chunk.choices:
-                    continue
-                    
-                delta = chunk.choices[0].delta
-                
-                # 1. Capture Tool Data
-                if delta.tool_calls:
-                    is_tool_call = True
-                    clean_tool_chunk = chunk.model_dump(exclude_none=True)
-                    tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
-                    
-                    tc = delta.tool_calls[0]
-                    if tc.id: tool_call_id = tc.id
-                    if tc.function.name: function_name += tc.function.name
-                    if tc.function.arguments: function_args += tc.function.arguments
+                tool_call_id, function_name, function_args = None, "", ""
+                is_tool_call = False
+                tool_chunk_buffer = []
 
-                # 2. Safely Stream Text to UI
-                if delta.content is not None or delta.role is not None:
-                    clean_chunk = chunk.model_dump(exclude_none=True)
-                    
-                    # Strip raw tool data so Open WebUI doesn't try to execute it
-                    if "tool_calls" in clean_chunk["choices"][0]["delta"]:
-                        del clean_chunk["choices"][0]["delta"]["tool_calls"]
-                    
-                    # CRITICAL FIX: Only yield if the delta isn't empty! Prevents UI freezing.
-                    if clean_chunk["choices"][0]["delta"]:
-                        yield f"data: {json.dumps(clean_chunk)}\n\n"
-
-            # 3. Handle Tool Execution
+                async for chunk in response:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.tool_calls:
+                        is_tool_call = True
+                        clean_tool_chunk = chunk.model_dump(exclude_none=True)
+                        tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
+                        tc = delta.tool_calls[0]
+                        if tc.id: tool_call_id = tc.id
+                        if tc.function.name: function_name += tc.function.name
+                        if tc.function.arguments: function_args += tc.function.arguments
+                    if delta.content is not None or delta.role is not None:
+                        clean_chunk = chunk.model_dump(exclude_none=True)
+                        if "tool_calls" in clean_chunk["choices"][0]["delta"]:
+                            del clean_chunk["choices"][0]["delta"]["tool_calls"]
+                        if clean_chunk["choices"][0]["delta"]:
+                            yield f"data: {json.dumps(clean_chunk)}\n\n"
             if is_tool_call:
                 print(f"\n[TOOL TRIGGERED] '{function_name}'")
-                
-                # IDE Tools (e.g., write_file): Pass raw JSON straight back to the editor
+
                 if function_name not in middleware_tool_names:
                     for buffered_chunk in tool_chunk_buffer:
                         yield f"data: {buffered_chunk}\n\n"
                     yield "data: [DONE]\n\n"
-                    return 
+                    return
 
-                # Local Middleware Tools (e.g., search_web): Run locally & show Collapsible UI!
                 print(f"[TOOL ROUTING] Running '{function_name}'")
-                
-                ui_msg = f"\n\n<details>\n<summary> <b>Tool called:</b> <code>{function_name}</code></summary>\n\n```json\n{function_args}\n```\n</details>\n\n"
 
+                ui_msg = f"\n\n<details>\n<summary> <b>Tool called:</b> <code>{function_name}</code></summary>\n\n```json\n{function_args}\n```\n</details>\n\n"
                 ui_chunk = {
-                    "id": "chatcmpl-middleware", # Use a standard-looking ID
+                    "id": "chatcmpl-middleware",
                     "object": "chat.completion.chunk",
                     "model": "default",
                     "choices": [{"index": 0, "delta": {"content": ui_msg}, "finish_reason": None}]
                 }
                 yield f"data: {json.dumps(ui_chunk)}\n\n"
 
-                # Parse and execute
                 try:
                     args_dict = json.loads(function_args)
                 except json.JSONDecodeError:
                     args_dict = {}
-                    
 
-                #Tool execution logic. Runs tools
                 tool_result_content = ""
                 if function_name == "search_web":
-                    
                     query = args_dict.get("query", "")
                     try:
-                        searxng_url = "http://127.0.0.1:8080/search" 
+                        searxng_url = "http://127.0.0.1:8080/search"
                         async with httpx.AsyncClient() as async_client:
-                            # THE FIX: Removed 'httpx.' from the start of async_client
                             resp = await async_client.get(searxng_url, params={"q": query, "format": "json"}, timeout=10.0)
-                                                    
+
                         if resp.status_code == 200:
-                            results = resp.json().get("results", [])[:5] 
-                            
+                            results = resp.json().get("results", [])[:5]
                             if not results:
                                 tool_result_content = "Search returned no results. Do not search again. Provide a final answer using your existing knowledge."
                                 print("[ACTION WARNING] Empty search results.")
@@ -284,11 +262,9 @@ async def chat_completions(request: OpenAIChatRequest):
                                     title = r.get('title', 'No Title')
                                     url = r.get('url', 'No URL')
                                     content = r.get('content', 'No summary available.')
-                                    
                                     formatted_text += f"### {i}. {title}\n"
                                     formatted_text += f"- **Source:** {url}\n"
                                     formatted_text += f"- **Snippet:** {content}\n\n"
-                                
                                 tool_result_content = formatted_text
                                 print(f"[ACTION SUCCESS] Passed {len(results)} formatted results to the LLM.")
                     except Exception as e:
@@ -299,7 +275,6 @@ async def chat_completions(request: OpenAIChatRequest):
                     try:
                         headers = {"User-Agent": "Mozilla/5.0"}
                         async with httpx.AsyncClient() as async_client:
-                            # THE FIX: Removed 'httpx.' from the start of async_client
                             resp = await async_client.get(url, headers=headers, timeout=10)
                         soup = BeautifulSoup(resp.text, "html.parser")
                         for s in soup(["script", "style", "nav", "footer"]): s.decompose()
@@ -307,17 +282,14 @@ async def chat_completions(request: OpenAIChatRequest):
                     except Exception as e:
                         tool_result_content = f"Webpage read failed: {str(e)}"
 
-
-                elif function_name == "search_Pdfs" and not Android_studio:
+                elif function_name == "search_Pdfs" and not android_studio:
                     query = args_dict.get("query", "")
                     try:
-                        # Offload disk I/O and fuzzy math to a background thread
                         tool_result_content = await asyncio.to_thread(tools.tool_def.search_pdfs, query, pdf_directory)
                     except Exception as e:
                         tool_result_content = f"PDF search failed: {str(e)}"
 
-
-                elif function_name == "read_Pdf_page" and not Android_studio:
+                elif function_name == "read_Pdf_page" and not android_studio:
                     file_path = pdf_directory + "/" + args_dict.get("file_name", "")
                     page_number = tools.tool_def.sanitize_page_number(args_dict.get("page_number", 0))
                     try:
@@ -326,32 +298,29 @@ async def chat_completions(request: OpenAIChatRequest):
                         tool_result_content = f"PDF page read failed: {str(e)}"
                 else:
                     tool_result_content = f"Unknown tool: {function_name}"
-                
-                #UI result return to user for verification:
-                # Pure Markdown alternative for collapsible blocks supported by Open WebUI
-                ui_result = (
-                f"<details>\n"
-                f"<summary><b>Tool Result: {function_name}</b></summary>\n\n"
-                f"{tool_result_content}\n\n"
-                f"</details>\n\n"
-                )
 
+                ui_result = (
+                    f"<details>\n"
+                    f"<summary><b>Tool Result: {function_name}</b></summary>\n\n"
+                    f"{tool_result_content}\n\n"
+                    f"</details>\n\n"
+                )
                 ui_result_chunk = {
-                    "id": "chatcmpl-middleware", 
+                    "id": "chatcmpl-middleware",
                     "object": "chat.completion.chunk",
                     "model": "default",
                     "choices": [{"index": 0, "delta": {"content": ui_result}, "finish_reason": None}]
                 }
                 yield f"data: {json.dumps(ui_result_chunk)}\n\n"
+
                 current_messages.append({
-                    "role": "assistant", 
-                    "content": None, 
+                    "role": "assistant",
+                    "content": None,
                     "tool_calls": [{"id": tool_call_id, "type": "function", "function": {"name": function_name, "arguments": function_args}}]
                 })
                 current_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": tool_result_content})
 
-                # Loop recursively to let Qwen read the tool output
-                async for chunk in agent_loop(current_messages):
+                async for chunk in agent_loop(current_messages, android_studio):
                     yield chunk
             else:
                 yield "data: [DONE]\n\n"
@@ -361,7 +330,7 @@ async def chat_completions(request: OpenAIChatRequest):
             yield f"data: {error_payload}\n\n"
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(agent_loop(initial_history), media_type="text/event-stream")
+    return StreamingResponse(agent_loop(agent_history, Android_studio), media_type="text/event-stream")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
