@@ -17,7 +17,7 @@ import models.model_switcher
 import tools.cleaning
 import asyncio
 import tools.tool_def
-
+import sys
 #Setting up paths and model manager, don't forget to update your .env file.
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 pdf_directory = models.model_switcher.AppSettings().pdf_directory
@@ -196,7 +196,7 @@ async def chat_completions(request: OpenAIChatRequest):
                     extra_body={"thinking_budget_tokens": 256}
                 )
 
-                tool_call_id, function_name, function_args = None, "", ""
+                active_tool_calls = {}
                 is_tool_call = False
                 tool_chunk_buffer = []
 
@@ -208,10 +208,24 @@ async def chat_completions(request: OpenAIChatRequest):
                         is_tool_call = True
                         clean_tool_chunk = chunk.model_dump(exclude_none=True)
                         tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
-                        tc = delta.tool_calls[0]
-                        if tc.id: tool_call_id = tc.id
-                        if tc.function.name: function_name += tc.function.name
-                        if tc.function.arguments: function_args += tc.function.arguments
+                        
+                        # Process all tool calls present in this chunk
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in active_tool_calls:
+                                # Initialize tracking for this specific tool call index
+                                active_tool_calls[idx] = {
+                                    "id": "",
+                                    "name": "",
+                                    "arguments": ""
+                                }
+                            
+                            if tc.id: 
+                                active_tool_calls[idx]["id"] += tc.id
+                            if tc.function.name: 
+                                active_tool_calls[idx]["name"] += tc.function.name
+                            if tc.function.arguments: 
+                                active_tool_calls[idx]["arguments"] += tc.function.arguments
                     if delta.content is not None or delta.role is not None:
                         clean_chunk = chunk.model_dump(exclude_none=True)
                         if "tool_calls" in clean_chunk["choices"][0]["delta"]:
@@ -219,107 +233,134 @@ async def chat_completions(request: OpenAIChatRequest):
                         if clean_chunk["choices"][0]["delta"]:
                             yield f"data: {json.dumps(clean_chunk)}\n\n"
             if is_tool_call:
-                print(f"\n[TOOL TRIGGERED] '{function_name}'")
+                assistant_tool_calls_payload = []
+                
+                # Process each gathered tool call in order
+                for idx, tc_data in sorted(active_tool_calls.items()):
+                    f_name = tc_data["name"]
+                    f_args = tc_data["arguments"]
+                    t_id = tc_data["id"]
 
-                if function_name not in middleware_tool_names:
-                    for buffered_chunk in tool_chunk_buffer:
-                        yield f"data: {buffered_chunk}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
+                    print(f"\n[TOOL TRIGGERED] Index {idx}: '{f_name}'")
 
-                print(f"[TOOL ROUTING] Running '{function_name}'")
+                    # If this is a tool meant for the IDE/VS Code and not our middleware
+                    if f_name not in middleware_tool_names:
+                        for buffered_chunk in tool_chunk_buffer:
+                            yield f"data: {buffered_chunk}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
 
-                ui_msg = f"\n\n<details>\n<summary> <b>Tool called:</b> <code>{function_name}</code></summary>\n\n```json\n{function_args}\n```\n</details>\n\n"
-                ui_chunk = {
-                    "id": "chatcmpl-middleware",
-                    "object": "chat.completion.chunk",
-                    "model": "default",
-                    "choices": [{"index": 0, "delta": {"content": ui_msg}, "finish_reason": None}]
-                }
-                yield f"data: {json.dumps(ui_chunk)}\n\n"
+                    print(f"[TOOL ROUTING] Running '{f_name}'")
 
-                try:
-                    args_dict = json.loads(function_args)
-                except json.JSONDecodeError:
-                    args_dict = {}
+                    # Send visual card to Open WebUI
+                    ui_msg = f"\n\n<details>\n<summary> <b>Tool called:</b> <code>{f_name}</code></summary>\n\n```json\n{f_args}\n```\n</details>\n\n"
+                    ui_chunk = {
+                        "id": "chatcmpl-middleware",
+                        "object": "chat.completion.chunk",
+                        "model": "default",
+                        "choices": [{"index": 0, "delta": {"content": ui_msg}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(ui_chunk)}\n\n"
 
-                tool_result_content = ""
-                if function_name == "search_web":
-                    query = args_dict.get("query", "")
                     try:
-                        searxng_url = "http://127.0.0.1:8080/search"
-                        async with httpx.AsyncClient() as async_client:
-                            resp = await async_client.get(searxng_url, params={"q": query, "format": "json"}, timeout=10.0)
+                        args_dict = json.loads(f_args)
+                    except json.JSONDecodeError:
+                        args_dict = {}
 
-                        if resp.status_code == 200:
-                            results = resp.json().get("results", [])[:5]
-                            if not results:
-                                tool_result_content = "Search returned no results. Do not search again. Provide a final answer using your existing knowledge."
-                                print("[ACTION WARNING] Empty search results.")
-                            else:
-                                formatted_text = "Here are the search results:\n\n"
-                                for i, r in enumerate(results, 1):
-                                    title = r.get('title', 'No Title')
-                                    url = r.get('url', 'No URL')
-                                    content = r.get('content', 'No summary available.')
-                                    formatted_text += f"### {i}. {title}\n"
-                                    formatted_text += f"- **Source:** {url}\n"
-                                    formatted_text += f"- **Snippet:** {content}\n\n"
-                                tool_result_content = formatted_text
-                                print(f"[ACTION SUCCESS] Passed {len(results)} formatted results to the LLM.")
-                    except Exception as e:
-                        tool_result_content = f"Web search failed: {str(e)}"
+                    # Execute the specific tool
+                    tool_result_content = ""
+                    if f_name == "search_web":
+                        query = args_dict.get("query", "")
+                        try:
+                            searxng_url = "http://127.0.0.1:8080/search"
+                            async with httpx.AsyncClient() as async_client:
+                                resp = await async_client.get(searxng_url, params={"q": query, "format": "json"}, timeout=10.0)
 
-                elif function_name == "read_webpage":
-                    url = args_dict.get("url", "")
-                    try:
-                        headers = {"User-Agent": "Mozilla/5.0"}
-                        async with httpx.AsyncClient() as async_client:
-                            resp = await async_client.get(url, headers=headers, timeout=10)
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                        for s in soup(["script", "style", "nav", "footer"]): s.decompose()
-                        tool_result_content = soup.get_text(separator="\n", strip=True)[:15000]
-                    except Exception as e:
-                        tool_result_content = f"Webpage read failed: {str(e)}"
+                            if resp.status_code == 200:
+                                results = resp.json().get("results", [])[:5]
+                                if not results:
+                                    tool_result_content = "Search returned no results. Do not search again. Provide a final answer using your existing knowledge."
+                                    print("[ACTION WARNING] Empty search results.")
+                                else:
+                                    formatted_text = "Here are the search results:\n\n"
+                                    for i, r in enumerate(results, 1):
+                                        title = r.get('title', 'No Title')
+                                        url = r.get('url', 'No URL')
+                                        content = r.get('content', 'No summary available.')
+                                        formatted_text += f"### {i}. {title}\n"
+                                        formatted_text += f"- **Source:** {url}\n"
+                                        formatted_text += f"- **Snippet:** {content}\n\n"
+                                    tool_result_content = formatted_text
+                                    print(f"[ACTION SUCCESS] Passed {len(results)} formatted results to the LLM.")
+                        except Exception as e:
+                            tool_result_content = f"Web search failed: {str(e)}"
 
-                elif function_name == "search_Pdfs" and not android_studio:
-                    query = args_dict.get("query", "")
-                    try:
-                        tool_result_content = await asyncio.to_thread(tools.tool_def.search_pdfs, query, pdf_directory)
-                    except Exception as e:
-                        tool_result_content = f"PDF search failed: {str(e)}"
+                    elif f_name == "read_webpage":
+                        url = args_dict.get("url", "")
+                        try:
+                            headers = {"User-Agent": "Mozilla/5.0"}
+                            async with httpx.AsyncClient() as async_client:
+                                resp = await async_client.get(url, headers=headers, timeout=10)
+                            soup = BeautifulSoup(resp.text, "html.parser")
+                            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
+                            tool_result_content = soup.get_text(separator="\n", strip=True)[:15000]
+                        except Exception as e:
+                            tool_result_content = f"Webpage read failed: {str(e)}"
 
-                elif function_name == "read_Pdf_page" and not android_studio:
-                    file_path = pdf_directory + "/" + args_dict.get("file_name", "")
-                    page_number = tools.tool_def.sanitize_page_number(args_dict.get("page_number", 0))
-                    try:
-                        tool_result_content = await asyncio.to_thread(tools.tool_def.read_pdf_page, file_path, page_number)
-                    except Exception as e:
-                        tool_result_content = f"PDF page read failed: {str(e)}"
-                else:
-                    tool_result_content = f"Unknown tool: {function_name}"
+                    elif f_name == "search_Pdfs" and not android_studio:
+                        query = args_dict.get("query", "")
+                        try:
+                            tool_result_content = await asyncio.to_thread(tools.tool_def.search_pdfs, query, pdf_directory)
+                        except Exception as e:
+                            tool_result_content = f"PDF search failed: {str(e)}"
 
-                ui_result = (
-                    f"<details>\n"
-                    f"<summary><b>Tool Result: {function_name}</b></summary>\n\n"
-                    f"{tool_result_content}\n\n"
-                    f"</details>\n\n"
-                )
-                ui_result_chunk = {
-                    "id": "chatcmpl-middleware",
-                    "object": "chat.completion.chunk",
-                    "model": "default",
-                    "choices": [{"index": 0, "delta": {"content": ui_result}, "finish_reason": None}]
-                }
-                yield f"data: {json.dumps(ui_result_chunk)}\n\n"
+                    elif f_name == "read_Pdf_page" and not android_studio:
+                        file_path = pdf_directory + "/" + args_dict.get("file_name", "")
+                        page_number = tools.tool_def.sanitize_page_number(args_dict.get("page_number", 0))
+                        try:
+                            tool_result_content = await asyncio.to_thread(tools.tool_def.read_pdf_page, file_path, page_number)
+                        except Exception as e:
+                            tool_result_content = f"PDF page read failed: {str(e)}"
+                    else:
+                        tool_result_content = f"Unknown tool: {f_name}"
 
-                current_messages.append({
+                    # Update Open WebUI with output details
+                    ui_result = (
+                        f"<details>\n"
+                        f"<summary><b>Tool Result: {f_name}</b></summary>\n\n"
+                        f"{tool_result_content}\n\n"
+                        f"</details>\n\n"
+                    )
+                    ui_result_chunk = {
+                        "id": "chatcmpl-middleware",
+                        "object": "chat.completion.chunk",
+                        "model": "default",
+                        "choices": [{"index": 0, "delta": {"content": ui_result}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(ui_result_chunk)}\n\n"
+
+                    # Collect the tool metadata to return to the LLM context
+                    assistant_tool_calls_payload.append({
+                        "id": t_id,
+                        "type": "function",
+                        "function": {"name": f_name, "arguments": f_args}
+                    })
+                    
+                    # Append the tool message outputs back to the active thread
+                    current_messages.append({
+                        "role": "tool", 
+                        "name": f_name,
+                        "tool_call_id": t_id, 
+                        "content": tool_result_content
+                    })
+
+                # Append the assistant block containing ALL the calls we executed
+                current_messages.insert(-len(active_tool_calls), {
                     "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{"id": tool_call_id, "type": "function", "function": {"name": function_name, "arguments": function_args}}]
+                    "content": "", 
+                    "tool_calls": assistant_tool_calls_payload
                 })
-                current_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": tool_result_content})
-
+                # Recurse to generate the final response or handle follow-up tools
                 async for chunk in agent_loop(current_messages, android_studio):
                     yield chunk
             else:
@@ -332,5 +373,11 @@ async def chat_completions(request: OpenAIChatRequest):
 
     return StreamingResponse(agent_loop(agent_history, Android_studio), media_type="text/event-stream")
 
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+    # If on Windows, bind to localhost. If on Linux (Debian), bind to 0.0.0.0
+    # so the Docker container can route through the bridge interface.
+    host_ip = "127.0.0.1" if sys.platform == "win32" else "0.0.0.0"
+    
+    print(f"Starting server on {host_ip}:8000...")
+    uvicorn.run("main:app", host=host_ip, port=8000, reload=False)

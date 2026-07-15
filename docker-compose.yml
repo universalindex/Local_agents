@@ -7,10 +7,13 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./searxng-data:/etc/searxng
+      # Mounts your existing massive configuration directory
+      - ./searxng-data:/etc/searxng:rw
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
       - SEARXNG_LIMITER=false
+    networks:
+      - ai-network
     restart: unless-stopped
 
   open-webui:
@@ -19,13 +22,27 @@ services:
     ports:
       - "3000:8080"
     environment:
-      - 'OPENAI_API_BASE_URL=http://host.docker.internal:8000' # Points to your Python Orchestrator
+      # 1. Point to your local Python Orchestrator running on your laptop's Port 8000
+      - 'OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1'
       - 'OPENAI_API_KEY=lemonade' # Filler key
+      
+      # 2. Automatically configure Open-WebUI's Web RAG to use SearXNG
+      - 'ENABLE_RAG_WEB_SEARCH=True'
+      - 'RAG_WEB_SEARCH_ENGINE=searxng'
+      # Uses the internal Docker DNS name "searxng" on port 8080
+      - 'SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>'
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - open-webui:/app/backend/data
+    networks:
+      - ai-network
     restart: always
+
+networks:
+  # Both containers join this network to securely resolve each other's domain names
+  ai-network:
+    driver: bridge
 
 volumes:
   open-webui:
