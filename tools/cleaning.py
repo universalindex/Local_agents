@@ -1,8 +1,76 @@
 from typing import Dict, List, Any
-
+import re
 
 
 import tools.schemas
+
+TOOL_PAIR_RE = re.compile(
+    r'\n\n<details data-tool-id="(?P<id>[^"]+)">\n'
+    r'<summary> <b>Tool called:</b> <code>(?P<name>[^<]+)</code></summary>\n\n'
+    r'```json\n(?P<args>.*?)\n```\n</details>\n\n'
+    r'<details data-tool-id="(?P=id)">\n'
+    r'<summary><b>Tool Result: (?P=name)</b></summary>\n\n'
+    r'(?P<result>.*?)\n\n</details>\n\n',
+    re.DOTALL,
+)
+
+def canonicalize_history(messages: list[dict]) -> list[dict]:
+    """
+    Rebuilds assistant turns that contain injected <details> tool cards
+    back into the structured assistant(tool_calls)+tool(...) messages the
+    engine actually cached. Open WebUI only ever sees the flattened
+    markdown version and resends that on the next message, which is a
+    different prompt shape than what's cached — this undoes the flattening
+    so the prefix matches again.
+    """
+    rebuilt = []
+    for msg in messages:
+        content = msg.get("content")
+        if msg.get("role") != "assistant" or not isinstance(content, str) \
+                or "<details data-tool-id=" not in content:
+            rebuilt.append(msg)
+            continue
+
+        matches = list(TOOL_PAIR_RE.finditer(content))
+        pos, i = 0, 0
+        while i < len(matches):
+            # group consecutive tool calls with nothing but whitespace
+            # between them — that's a parallel tool-call batch from one
+            # completion, and needs to be ONE assistant message with
+            # multiple tool_calls, not several separate ones
+            group = [matches[i]]
+            j = i + 1
+            while j < len(matches) and \
+                    content[matches[j-1].end():matches[j].start()].strip() == "":
+                group.append(matches[j])
+                j += 1
+
+            rebuilt.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": m.group("id"),
+                        "type": "function",
+                        "function": {"name": m.group("name"), "arguments": m.group("args")},
+                    }
+                    for m in group
+                ],
+            })
+            for m in group:
+                rebuilt.append({
+                    "role": "tool",
+                    "name": m.group("name"),
+                    "tool_call_id": m.group("id"),
+                    "content": m.group("result"),
+                })
+
+            pos, i = group[-1].end(), j
+
+        trailing = content[pos:].strip()
+        if trailing:
+            rebuilt.append({"role": "assistant", "content": trailing})
+    return rebuilt
 
 def filter_android_studio_tools(data):
     if "tools" in data and isinstance(data["tools"], list):

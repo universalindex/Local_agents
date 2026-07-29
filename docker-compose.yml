@@ -1,4 +1,4 @@
-version: '3.7'
+﻿version: '3.7'
 
 services:
   searxng:
@@ -37,7 +37,7 @@ services:
       - open-webui:/app/backend/data
     networks:
       - ai-network
-    restart: always
+    restart: unless-stopped
 
 networks:
   # Both containers join this network to securely resolve each other's domain names

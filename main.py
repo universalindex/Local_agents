@@ -23,14 +23,12 @@ Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MOD
 pdf_directory = models.model_switcher.AppSettings().pdf_directory
 
 
-AGENT_SYSTEM_PROMPT = """[SYSTEM: LOCAL RESEARCH & CODING AGENT]
-- Verify all infomation using tools provided. 
-- Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information
+AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant. Your objective is to solve tasks efficiently by leveraging local tools directly.
+- Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information before responding.
 - The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
-- CRITICAL: Tool arguments must strictly match required types.
-- For `read_pdf_page`, the `page_number` MUST be a single integer (e.g., 94). Do NOT write strings or ranges. Use this tool after the search tool
 - For search_pdf use one or two kekywords only.
-- Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags."""
+- Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags.
+- Avoid calling multiple read file in a single turn. It's ok to do it multiple turns, but avoid gathering tons of information unless absolutely necessary."""
 
 
 # I don't love this bit but I was having issues with the clients.py and letting the internet know which port I host the model on isn't horrible. 
@@ -131,7 +129,8 @@ async def chat_completions(request: OpenAIChatRequest):
                 model=matching_model.name,
                 messages=initial_history,
                 stream=False,
-                max_tokens=150
+                max_tokens=150,
+                temperature=0.7
             )
         return response
     if Android_studio:
@@ -176,7 +175,7 @@ async def chat_completions(request: OpenAIChatRequest):
     agent_history, Android_studio = tools.cleaning.strip_ide_bloat(
         [m.model_dump(exclude_none=True) for m in request.messages]
     )
-
+    agent_history = tools.cleaning.canonicalize_history(agent_history)
     middleware_tool_names = [t["function"]["name"] for t in MIDDLEWARE_TOOLS]
     combined_tools = inbound_tools + MIDDLEWARE_TOOLS
 
@@ -253,7 +252,7 @@ async def chat_completions(request: OpenAIChatRequest):
                     print(f"[TOOL ROUTING] Running '{f_name}'")
 
                     # Send visual card to Open WebUI
-                    ui_msg = f"\n\n<details>\n<summary> <b>Tool called:</b> <code>{f_name}</code></summary>\n\n```json\n{f_args}\n```\n</details>\n\n"
+                    ui_msg = f'\n\n<details data-tool-id="{t_id}">\n<summary> <b>Tool called:</b> <code>{f_name}</code></summary>\n\n```json\n{f_args}\n```\n</details>\n\n'
                     ui_chunk = {
                         "id": "chatcmpl-middleware",
                         "object": "chat.completion.chunk",
@@ -326,7 +325,7 @@ async def chat_completions(request: OpenAIChatRequest):
 
                     # Update Open WebUI with output details
                     ui_result = (
-                        f"<details>\n"
+                        f'<details data-tool-id="{t_id}">\n'
                         f"<summary><b>Tool Result: {f_name}</b></summary>\n\n"
                         f"{tool_result_content}\n\n"
                         f"</details>\n\n"

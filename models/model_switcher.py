@@ -150,7 +150,7 @@ class VramModelManager:
                 **popen_kwargs
             )
 
-            print("[LOG] Holding proxy pipeline. Waiting for FastFlowLM NPU allocation...")
+            print("[LOG] Holding proxy pipeline. Waiting for RAM allocation...")
             api_base = f"http://127.0.0.1:{self.backend_port}"
             print(f"[VRAM] Allocating memory for {matching_model.display_name}. This may take a few minutes...", flush=True)
             print(f"[Lifecycle] Launching: {' '.join(cmd)}", flush=True)
@@ -162,7 +162,7 @@ class VramModelManager:
                         if response.getcode() == 200:
                             data = json.loads(response.read().decode())
                             if any(m.get("id") == matching_model.name for m in data.get("data", [])):
-                                print("[LOG] FastFlowLM reporting healthy! Releasing proxy hold.")
+                                print("[LOG] Model server reporting healthy! Releasing proxy hold.")
                                 self.current_model_id = matching_model.display_name
                                 break
                 except Exception:
