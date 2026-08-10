@@ -28,11 +28,10 @@ AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant
 - The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
 - For search_pdf use one or two kekywords only.
 - Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags.
+- If asked to generate a title, please write one that nicely follows the format "(emoji) 1-2 words."
 - Avoid calling multiple read file in a single turn. It's ok to do it multiple turns, but avoid gathering tons of information unless absolutely necessary."""
 
 
-# I don't love this bit but I was having issues with the clients.py and letting the internet know which port I host the model on isn't horrible. 
-# Eventually It'll go back though...
 engine_client = models.clients.llama_cpp_client
 
 @asynccontextmanager
@@ -77,12 +76,10 @@ async def get_tags():
 
 @app.get("/models")
 @app.get("/v1/models")
+@app.get("/api/flags")
 async def get_models():
     return models.startup_flags.open_models(Model_Managed)
 
-@app.get("/api/flags")
-async def get_flags():
-    return models.startup_flags.open_flags(Model_Managed)
 
 @app.get("/api/version")
 async def mock_ollama_version():

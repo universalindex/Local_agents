@@ -70,17 +70,18 @@ class VramModelManager:
 
         print(f"[VRAM] Evicting '{self.current_model_id}' (PID: {self.process.pid})...")
         try:
+            # Kill everything down the tree
             parent = psutil.Process(self.process.pid)
             children = parent.children(recursive=True)
-            
-            # Kill everything down the tree
-            for child in children:
-                child.kill()
-            parent.kill()
+            procs = [parent] + children
 
-            # Block until OS confirms cleanup to avoid socket collision or VRAM overlap
-            psutil.wait_procs([parent] + children, timeout=10)
-            print("[VRAM] OS process tree cleared.")
+            for p in procs:
+                p.terminate()          # SIGTERM — ask nicely first
+            gone, alive = psutil.wait_procs(procs, timeout=5)  # give it a few seconds
+
+            for p in alive:
+                p.kill()                # SIGKILL — anything that ignored SIGTERM
+            psutil.wait_procs(alive, timeout=10)
         except psutil.NoSuchProcess:
             pass
         finally:
