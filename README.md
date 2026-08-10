@@ -1,171 +1,273 @@
 # Local Agents
 
-Local Agents is a Python-based local orchestration project for running and switching local LLM backends (via `llama.cpp` or `flm` / FastFlowLM) and connecting them to web-search-assisted agent workflows. It acts as an **OpenAI-compatible proxy**, routing IDE and UI requests to your chosen local models while providing built-in middleware tools (web search, webpage reading, PDF search/read).
+A Python-based local LLM orchestration layer that connects IDEs and web frontends to your locally-running models. It acts as an **OpenAI-compatible proxy** with built-in agent tool execution — web search, webpage reading, and PDF search/read — all powered by `llama.cpp` or [FastFlowLM](https://github.com/FastFlowLM/FastFlowLM).
 
-## What is in this repo
+![Architecture](https://img.shields.io/badge/Python-3.11-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-- `main.py` — FastAPI orchestrator proxy (OpenAI-compatible API with built-in agent tool execution and streaming)
-- `models/model_switcher.py` — VRAM-aware model lifecycle manager (auto-start/stop `llama-server` or `flm` with zombie process cleanup)
-- `models/clients.py` — OpenAI-compatible client configuration for local middleware
-- `tools/schemas.py` — Middleware tool schema definitions (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`)
-- `tools/tool_def.py` — PDF search and reading implementation with custom indexing and table extraction
-- `tools/cleaning.py` — IDE request cleaning utilities (filters bloat for Android Studio, etc.)
-- `docker-compose.yml` — Local infrastructure for SearXNG (web search) and Open WebUI
-- `start.ps1` — Windows PowerShell startup helper script
-- `environment.yml` — Conda environment configuration
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────────────────────┐     ┌──────────────┐
+│ IDE / VS Code│────▶│                              │────▶│ llama.cpp /  │
+│  Open WebUI  │────▶│  main.py (FastAPI Proxy)     │────▶│  FastFlowLM  │
+│  Other UIs   │────▶│  :8000                       │────▶│  :8081       │
+└──────────────┘     │                              │     └──────────────┘
+                     │  Agent Loop (tool execution) │
+                     │  Web Search (SearXNG)        │     ┌──────────────┐
+                     │  PDF Search / Read           │────▶│  SearXNG     │
+                     │                              │     │  :8080       │
+                     └──────────────────────────────┘     └──────────────┘
+                                                             ┌──────────────┐
+                                                             │  Open WebUI  │
+                                                             │  :3000       │
+                                                             └──────────────┘
+```
+
+The proxy sits between your frontend (IDE extension, Open WebUI, etc.) and your local model server. It:
+
+1. **Routes** incoming OpenAI-compatible API requests to the correct model.
+2. **Manages** model lifecycles — auto-starts, switches, and evicts model servers based on VRAM availability.
+3. **Executes** middleware tools (web search, webpage reading, PDF search/read) within the agent loop.
+4. **Cleans** IDE-specific request bloat (e.g., Android Studio's `developer` role).
+
+## Project Structure
+
+```
+├── main.py                  # FastAPI orchestrator proxy (OpenAI-compatible API)
+├── agent_loop.py            # Streaming agent loop with tool execution
+├── environment.yml          # Conda environment definition
+├── docker-compose.yml       # SearXNG + Open WebUI containers
+├── start.ps1                # Windows PowerShell startup helper
+├── .env                     # Model & path configuration (copy from .env.example)
+├── .env.example             # Template for .env
+│
+├── models/
+│   ├── model_switcher.py    # VRAM-aware model lifecycle manager
+│   ├── clients.py           # OpenAI SDK client pointing to local server
+│   └── startup_flags.py     # Model listing / Ollama-mock endpoints
+│
+├── tools/
+│   ├── schemas.py           # Tool schema definitions (OpenAI format)
+│   ├── tool_defs.py         # Web search & webpage reading implementations
+│   ├── pdf_tools.py         # PDF full-text search with custom indexing
+│   └── cleaning.py          # IDE request cleaning & history canonicalization
+│
+└── searxng-data/
+    └── settings.yml         # SearXNG configuration
+```
+
+## Features
+
+- **Multi-engine support** — Run models via `llama.cpp` (`llama-server`) or FastFlowLM (`flm`) for AMD NPU acceleration.
+- **VRAM-aware model switching** — Automatically launches, switches, and evicts model servers; cleans up orphaned processes on startup.
+- **Agent tool loop** — Streaming chat completions with built-in tool execution (web search, webpage reading, PDF search/read).
+- **OpenAI-compatible API** — Drop-in replacement for IDE extensions (Continue, CodeGPT, etc.) and Open WebUI.
+- **Ollama mock endpoints** — Returns proper `/api/tags`, `/api/ps`, `/api/version` responses for Open WebUI compatibility.
+- **PDF search & read** — Full-text indexed PDF search with optional custom `custom_index.json` for curated category mappings.
+- **IDE request cleaning** — Strips Android Studio `developer` role, filters tool bloat, canonicalizes tool-call history for context cache consistency.
 
 ## Prerequisites
 
-- **Python 3.11**
-- **Conda** (recommended; environment file provided)
-- **Docker + Docker Compose**
-- **`llama.cpp`** — the `llama-server` binary (built from [llama.cpp](https://github.com/ggerganov/llama.cpp))
-- **`flm`** (optional) — FastFlowLM CLI tool, required only if using `engine: Fast_flow` models in `.env` enables NPU support on AMD NPU's
-- **Git**
+| Requirement | Details |
+|---|---|
+| **Python 3.11** | Required (managed via Conda) |
+| **Conda** | Recommended — `environment.yml` provided |
+| **Docker + Docker Compose** | Required for SearXNG and Open WebUI |
+| **`llama-server`** | Built from [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) |
+| **`flm`** *(optional)* | [FastFlowLM](https://github.com/FastFlowLM/FastFlowLM) CLI for AMD NPU models |
+| **Git** | For cloning the repo |
 
-> [!NOTE]
-> **Port Reference**:
-> - `8000`: Orchestrator proxy (LLM endpoint for IDEs/WebUI)
-> - `8081`: Model backend (llama-server or flm)
-> - `8080`: SearXNG (web search)
-> - `3000`: Open WebUI
+## Quick Start
 
-## Installation
+### 1. Clone and set up the environment
 
-1. **Clone and enter the project**
-   ```bash
-   git clone <repo-url>
-   cd Local_agents
-   ```
+```bash
+git clone <repo-url>
+cd Local_agents
+conda env create -f environment.yml
+conda activate local_agents
+```
 
-2. **Create the Conda environment**
-   ```bash
-   conda env create -f environment.yml
-   conda activate local_agents
-   ```
+### 2. Configure `.env`
 
-3. **Configure environment files (`.env`)**
-   - Copy `.env.example` to `.env`.
-   - Update paths and model entries so they match your local system.
-   - Ensure each model entry includes valid file paths and a correct `server_path`.
-   - See the detailed [`.env` Configuration](#env-configuration) section below for every field.
+```bash
+cp .env.example .env
+```
 
-4. **Start local infrastructure**
-   ```bash
-   docker compose up -d
-   ```
-   This boots **SearXNG** (web search, port 8080) and **Open WebUI** (port 3000).
+Edit `.env` to set your model paths, engine binaries, and PDF directory. See the [`.env` Configuration](#env-configuration) section below for details.
 
-5. **Run the app**
-   ```bash
-   python main.py
-   ```
+### 3. Start infrastructure
 
-> [!TIP]
-> On Windows you can use the helper script: `.\start.ps1` (runs Docker then launches the Python backend).
+```bash
+docker compose up -d
+```
 
+This boots:
+- **SearXNG** — local metasearch engine (`http://localhost:8080`)
+- **Open WebUI** — web frontend (`http://localhost:3000`)
 
----
+### 4. Launch the orchestrator
+
+```bash
+python main.py
+```
+
+The proxy starts on `http://0.0.0.0:8000` (Linux) or `http://127.0.0.1:8000` (Windows).
+
+> **Windows users:** Run `.\start.ps1` to start Docker, infrastructure, and the Python backend in one command.
+
+## Port Reference
+
+| Port | Service |
+|---|---|
+| `8000` | Orchestrator proxy (LLM endpoint for IDEs / WebUI) |
+| `8081` | Model backend (`llama-server` or `flm`) — managed dynamically |
+| `8080` | SearXNG web search |
+| `3000` | Open WebUI frontend |
 
 ## `.env` Configuration
 
-The `.env` file drives all model and path configuration via `pydantic-settings`. Below is a breakdown of every required and optional field.
+All configuration is driven by a single `.env` file parsed by `pydantic-settings`.
 
 ### `MODELS`
 
-A JSON array describing every local model you want available. Each model object has the following fields:
+A JSON array of model definitions. Each entry requires:
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | ✅ | The internal model identifier (sent to the OpenAI-compatible API). |
-| `display_name` | ✅ | Human-readable name shown in Open WebUI and IDE dropdowns. |
-| `path` | ✅ | Absolute or relative path to the model weights file (`.gguf`, `.safetensors`, etc.). |
-| `server_path` | ✅ | Absolute or relative path to the engine binary. For `llama.cpp` engines this is the `llama-server` executable. For `Fast_flow` engines you may use `"flm"` (if on PATH). |
-| `engine` | ✅ | Either `"llama.cpp"` or `"Fast_flow"`. Determines which launch command is built. |
-| `mmproj` | ❌ | Path to a multimodal projector file (e.g., for vision-enabled models). Leave as `null` if unused. |
-| `special_arguments` | ❌ | Additional CLI flags as a shell-string (e.g., `"-ngl 99 --tensor-split 1"`). Leave as `null` if unused. |
-
-**Example entries:**
-
-```json
-{
-  "name": "qwen2.5-7b-instruct",
-  "display_name": "Qwen 2.5 7B Instruct",
-  "path": "./models/qwen2.5-7b-instruct-Q5_K_M.gguf",
-  "server_path": "C:/llama.cpp/server/llama-server.exe",
-  "engine": "llama.cpp",
-  "mmproj": null,
-  "special_arguments": "-ngl 99 --ctx-size 8192"
-}
-```
-
-```json
-{
-  "name": "llama-3.1-8b",
-  "display_name": "Llama 3.1 8B",
-  "path": "./models/llama-3.1-8b.Q4_K_M.gguf",
-  "server_path": "flm",
-  "engine": "Fast_flow",
-  "mmproj": null,
-  "special_arguments": null
-}
-```
+| `name` | ✅ | Internal model identifier (for FLM: must match `flm list` output) |
+| `display_name` | ✅ | Human-readable name shown in UI dropdowns |
+| `path` | ✅ | Path to model weights (`.gguf`, etc.). For FLM engines, any placeholder works |
+| `server_path` | ✅ | Path to engine binary (`llama-server` for `llama.cpp`, or `"flm"` for FastFlowLM) |
+| `engine` | ✅ | `"llama.cpp"` or `"Fast_flow"` |
+| `mmproj` | ❌ | Multimodal projector path for vision models (`null` if unused) |
+| `special_arguments` | ❌ | Extra CLI flags as a shell string (e.g., `"-c 32768 -np 1 -t 8 -fa"`) |
+| `context` | ❌ | Context window size reported to clients (default: `2048`) |
 
 ### `pdf_directory`
 
-| Field | Required | Description |
-|---|---|---|
-| `pdf_directory` | ✅ | Absolute path to a directory containing PDFs. The agent can search and read PDFs here via the `search_Pdfs` and `read_Pdf_page` tools. |
+Absolute path to a directory containing PDFs. The agent uses `search_Pdfs` and `read_Pdf_page` tools to search and read files here. A full-text search index is built automatically on first use.
 
-> [!TIP]
-> The first time you use the PDF tools against a new directory, the system will build a search index (takes a moment). Subsequent searches use the cached index.
-> You can additionaly create your own JSON index that matches formatting as follows to improve effectivness: name it custom_index.json and 
-```json
-   {
-    "Catagory name": {
-        "pages": [Pages is referenced on],
-        "see_also": [
-            "other entries with information",
-            "Other entry with inromation"
-        ],
-        "subs": {
-         Subcatagories
-        }
-    },
-```
-
-
-
-### Minimal `.env` Example
+### Example `.env`
 
 ```env
-MODELS=[
+MODELS='[
   {
     "name": "qwen2.5-7b",
     "display_name": "Qwen 2.5 7B",
     "path": "./models/qwen2.5-7b-Q5_K_M.gguf",
-    "server_path": "C:/llama.cpp/build/bin/llama-server.exe",
+    "server_path": "/path/to/llama-server",
     "engine": "llama.cpp",
     "mmproj": null,
-    "special_arguments": "-ngl 99"
+    "special_arguments": "-c 32768 -np 1 -t 8 -fa",
+    "context": 24576
+  },
+  {
+    "name": "qwen3.5:9b",
+    "display_name": "Qwen 9B NPU",
+    "path": "placeholder",
+    "server_path": "flm",
+    "engine": "Fast_flow",
+    "context": 2048
   }
-]
-pdf_directory=D:/Documents/pdfs
+]'
+pdf_directory=/home/user/documents/pdfs
 ```
 
-## Notes on `llama.cpp` and Engine Selection
+### Custom PDF Index (Optional)
 
-- The orchestrator launches **exactly one** model server at a time on port **8081**. Switching models evicts the previous server automatically.
-- For `llama.cpp` models the launch command is:
-  ```
-  <server_path> -m <path> --port 8081 --alias <name> [special_arguments]
-  ```
-- For `Fast_flow` (`flm`) models the launch command is:
-  ```
-  flm serve <name> -p 8081 --ctx-len 131072
+Create `custom_index.json` inside your `pdf_directory` to add curated category mappings. The format:
 
+```json
+{
+  "MyPDF": {
+    "Category Name": {
+      "pages": [1, 5, 12],
+      "see_also": ["Related Category"],
+      "subs": {
+        "Subcategory": {
+          "pages": [3, 7],
+          "see_also": []
+        }
+      }
+    }
+  }
+}
+```
 
-Credits:
-llama.cpp https://github.com/ggml-org/llama.cpp and Fast Flow LM https://github.com/FastFlowLM/FastFlowLM powering the backend
+## Engine Details
 
-This middleware server can serve as a recepticle for any endpoint you like, it has open web UI built into but pointing something expecting an openAI endpoint will allow the reciver to select models and resolve it's own tool requests.
+### llama.cpp
+
+Launch command built by the model switcher:
+
+```
+<server_path> -m <path> --port 8081 --alias <name> [special_arguments]
+```
+
+The orchestrator launches **exactly one** model server at a time on port `8081`. Switching models stops the previous server and releases VRAM.
+
+### FastFlowLM (FLM)
+
+Launch command:
+
+```
+flm serve <name> -p 8081 --ctx-len 131072
+```
+
+FLM models run on AMD NPUs. Install models via `flm pull` and list them with `flm list`. The `name` field must exactly match the output of `flm list`.
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/chat/completions` | Standard OpenAI chat completions (agent mode) |
+| `POST` | `/chat/completions` | Alias for above |
+| `GET` | `/v1/models` | List available models |
+| `GET` | `/models` | Alias for above |
+| `GET` | `/api/tags` | Ollama-compatible model tags |
+| `GET` | `/api/ps` | Currently loaded models |
+| `GET` | `/api/version` | Mock version string |
+
+IDE requests (model names ending in `-ide`) are routed through a passthrough mode that preserves inbound tool definitions.
+
+## Agent Tools
+
+The built-in middleware tools are available in the agent loop:
+
+| Tool | Description |
+|---|---|
+| `search_web` | Queries SearXNG and returns up to 5 ranked results with titles, URLs, and snippets |
+| `read_webpage` | Fetches a URL and extracts clean text content |
+| `search_Pdfs` | Keyword search across indexed PDFs in `pdf_directory` |
+| `read_Pdf_page` | Extracts text from a specific page of a PDF (supports table extraction) |
+
+> **Tip:** If running on systems with ≤ 64 GB RAM, consider reducing the tool set in your frontend to avoid context pressure.
+
+## IDE Integration
+
+The proxy supports IDE extensions that expect an OpenAI-compatible endpoint:
+
+1. Set your IDE's API base URL to `http://localhost:8000/v1`
+2. Set the API key to any value (e.g., `sk-no-key-required`) — the proxy ignores it
+3. Select models from the dropdown populated by `/v1/models`
+
+Model names ending in `-ide` trigger passthrough mode, forwarding the IDE's own tool definitions directly to the model.
+
+## Windows Startup Script
+
+`start.ps1` automates the full startup sequence:
+
+1. Verifies / starts Docker Desktop
+2. Launches Docker Compose infrastructure
+3. Starts the Python orchestrator
+4. On exit: tears down containers and optionally stops Docker Desktop
+
+```powershell
+.\start.ps1
+```
+
+## License
+
+MIT

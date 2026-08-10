@@ -22,6 +22,7 @@ class LocalModel(BaseModel):
     server_path: str
     special_arguments: str | None = None
     engine: str
+    context: int | None = 2048  # Optional context size for the model
 
 class AppSettings(BaseSettings):
     MODELS: list[LocalModel]
@@ -142,7 +143,7 @@ class VramModelManager:
 
             self.process = subprocess.Popen(
                 cmd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, #toggle these between DEVNULL and None to toggle engine logs in teh console. 
                 stdout=None,
                 stderr=None,
                 text=True,
