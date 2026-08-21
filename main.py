@@ -28,8 +28,8 @@ AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant
 - The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
 - For search_pdf use one or two kekywords only.
 - Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags.
-- If asked to generate a title, please write one that nicely follows the format "(emoji) 1-2 words."
-- Avoid calling multiple read file in a single turn. It's ok to do it multiple turns, but avoid gathering tons of information unless absolutely necessary."""
+- If asked to generate a title text, Do not think, output one that follows the follwoing format (emoji) [breif title text]
+- Avoid calling multiple read files/webpages in a single turn. It's ok to do it multiple turns, but avoid gathering tons of information unless absolutely necessary."""
 
 
 engine_client = models.clients.llama_cpp_client
@@ -125,8 +125,10 @@ async def chat_completions(request: OpenAIChatRequest):
                 messages=initial_history,
                 stream=False,
                 max_tokens=150,
-                temperature=0.7
+                temperature=0.7,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}}
             )
+        print(f"[TITLE DEBUG] content={response.choices[0].message.content!r} reasoning={getattr(response.choices[0].message, 'reasoning_content', None)!r}")
         return response
     if Android_studio:
         print("[LOG] Trimming Android Studio native tools down to save NPU context.")
