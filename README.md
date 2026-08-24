@@ -111,6 +111,8 @@ This boots:
 ### 4. Configure STT TTS and custom open web UI functions
 
 There are several (optional) features in this project that require some setup from the open web UI interface. See the below sections  [Jump to STT & TTS](#stt--tts--manual-setup) and [Jump to Open Web UI](#open-web-ui-get-active-model-and-kill-model--requires-manual-setup)
+Open web UI also requires you to make an account on the first launch, this account is the admin acount. Remember this it can be whatever but is irratating to re-set if you forget it. You'll have to sign into it every time you launch open web UI
+
 
 ### 5. Launch the orchestrator
 
