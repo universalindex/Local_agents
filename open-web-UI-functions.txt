@@ -1,0 +1,78 @@
+
+### The Kill endpoint function
+
+"""
+title: Kill Model Server
+icon_url: data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔪</text></svg>
+"""
+
+from pydantic import BaseModel
+import requests
+
+
+class Action:
+    class Valves(BaseModel):
+        base_url: str = "http://<your-server-ip>:8000"
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    async def action(self, body: dict, __event_emitter__=None) -> None:
+        try:
+            result = requests.post(
+                f"{self.valves.base_url}/api/kill", timeout=20
+            ).json()
+            unloaded = result.get("unloaded")
+            msg = f"Killed: {unloaded}" if unloaded else "Nothing was loaded"
+            await __event_emitter__(
+                {"type": "notification", "data": {"type": "success", "content": msg}}
+            )
+        except Exception as e:
+            await __event_emitter__(
+                {
+                    "type": "notification",
+                    "data": {"type": "error", "content": f"Kill failed: {e}"},
+                }
+            )
+
+
+
+#The get active model function
+"""
+title: Model Status
+icon_url: data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>
+"""
+
+from pydantic import BaseModel
+import requests
+
+
+class Action:
+    class Valves(BaseModel):
+        base_url: str = "http://<your-server-ip>:8000"
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    async def action(self, body: dict, __event_emitter__=None) -> None:
+        try:
+            ps = requests.get(f"{self.valves.base_url}/api/ps", timeout=5).json()
+            models_running = ps.get("models", [])
+            msg = (
+                f"Model loaded: {models_running[0]['name']}"
+                if models_running
+                else "No model loaded"
+            )
+            await __event_emitter__(
+                {"type": "notification", "data": {"type": "info", "content": msg}}
+            )
+        except Exception as e:
+            await __event_emitter__(
+                {
+                    "type": "notification",
+                    "data": {"type": "error", "content": f"Status check failed: {e}"},
+                }
+            )
+
+
+
