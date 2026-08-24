@@ -306,7 +306,7 @@ Model names ending in `-ide` trigger passthrough mode, forwarding the IDE's own 
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.txt) file for details.
 
 ### Third-Party Software & Models
 This repository orchestrates external tools (such as SearXNG, Open WebUI, llama.cpp, and FastFlowLM) and model weights. Each third-party component remains subject to its respective upstream license.
