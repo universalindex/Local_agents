@@ -256,7 +256,11 @@ The built-in middleware tools are available in the agent loop:
 
 Text to speech, and speach to text integrations can be set up using the kokoro and speaches docker contianers:
 To set this up first first set the openweb-ui audio page to look EXACTLY at follows (The api key isn't a place holder for kokoro it's actually required)
-![Add a bug report if this is broken I don't want to type it all out.](20206-09-24-121420.png "OpenWebUI Audio config")
+
+
+![Add a bug report if this is broken I don't want to type it all out.](2026-08-24-121420.png "OpenWebUI Audio config")
+
+
 
 **Note** This is to be configured in the Admin audio config not the other one. You may choose other stt or tts models but this was the simpelist for me to get running.
 
