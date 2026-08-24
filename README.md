@@ -106,8 +106,14 @@ docker compose up -d
 This boots:
 - **SearXNG** — local metasearch engine (`http://localhost:8080`)
 - **Open WebUI** — web frontend (`http://localhost:3000`)
+- **Kokoro**- TTS backend (`http://localhost:8880`)
+- **Speaches**- STT backend (`http://localhost:8001`)
 
-### 4. Launch the orchestrator
+### 4. Configure STT TTS and custom open web UI functions
+
+There are several (optional) features in this project that require some setup from the open web UI interface. See the below sections  [Jump to STT & TTS](#stt--tts--manual-setup) and [Jump to Open Web UI](#open-web-ui-get-active-model-and-kill-model--requires-manual-setup)
+
+### 5. Launch the orchestrator
 
 ```bash
 python main.py
@@ -245,6 +251,36 @@ The built-in middleware tools are available in the agent loop:
 
 > **Tip:** If running on systems with ≤ 64 GB RAM, consider reducing the tool set in your frontend to avoid context pressure.
 
+
+## STT & TTS -manual setup
+
+Text to speech, and speach to text integrations can be set up using the kokoro and speaches docker contianers:
+To set this up first first set the openweb-ui audio page to look EXACTLY at follows (The api key isn't a place holder for kokoro it's actually required)
+![Add a bug report if this is broken I don't want to type it all out.](20206-09-24-121420.png "OpenWebUI Audio config")
+
+**Note** This is to be configured in the Admin audio config not the other one. You may choose other stt or tts models but this was the simpelist for me to get running.
+
+Then procede to `http://localhost:8001/docs` to download your stt model, the eaiset way I found to do this was through the /docs endpoint tester. You could probbably write a function for openweb UI to do it too, but since you only have to do this once I figured these directons were good enough.
+
+Locate the "/v1/models/{model_id} Download Remote Model" feild and use the test/try endpoint button to request Systran/faster-whisper-small This downloads the model.
+Next run the same model in the "/v1/models/{model_id} Get Local Model" feild
+
+To test it worked run /v1/audio/models List Local Audio Models. If it gives your model then a long list of language prefixes it's ready. 
+Save your open web UI setting and **IMPORTANT** close and reload your docker containers. Open web UI doesn't activate these settings until you kill its docker container completely and reload. Why? I have no idea.
+
+
+## Open web UI-get active model and Kill model -Requires manual setup
+
+
+ The file open-web-ui-functions.txt incudes two open web UI functions.
+ these functions append a get active model and unload active model from VRAM feild to the end of every agent message.
+ Clicking on them generates a notification telling you which active model is loaded into VRAM or unloads teh currenlty selected model. 
+
+To set these up create a new function for each in your open web UI copy/paste the code in. 
+then locate turn them on once with the on/off switch next to the button, and once globally (so It' after every message) by clicking on the three dots and turn on globally
+Then select the gear icon (hover over is valves) and set that feild to `http://host.docker.internal:8000` for both of them as well. This let's them make requests to the middlewear elsewhere.
+
+
 ## IDE Integration
 
 The proxy supports IDE extensions that expect an OpenAI-compatible endpoint:
@@ -270,4 +306,9 @@ Model names ending in `-ide` trigger passthrough mode, forwarding the IDE's own 
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Software & Models
+This repository orchestrates external tools (such as SearXNG, Open WebUI, llama.cpp, and FastFlowLM) and model weights. Each third-party component remains subject to its respective upstream license.
+
+

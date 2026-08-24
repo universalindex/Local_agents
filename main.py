@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import uvicorn
 from openai import AsyncOpenAI
 import httpx
+import signal
 import time
 import models.startup_flags
 from tools.schemas import MIDDLEWARE_TOOLS
@@ -25,10 +26,9 @@ Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MOD
 
 AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant. Your objective is to solve tasks efficiently by leveraging local tools directly.
 - Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information before responding.
-- The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool Use this for any D&D information.
+- The local directory for search and read pdf tools points to D&D manuals. ALWAYS use the read tool after the search tool if asked for any D&D information.
 - For search_pdf use one or two kekywords only.
 - Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags.
-- If asked to generate a title text, Do not think, output one that follows the follwoing format (emoji) [breif title text]
 - Avoid calling multiple read files/webpages in a single turn. It's ok to do it multiple turns, but avoid gathering tons of information unless absolutely necessary."""
 
 
@@ -85,6 +85,13 @@ async def get_models():
 async def mock_ollama_version():
     """Some Open WebUI feature checks gate on parsing this — safe to fake."""
     return {"version": "0.5.7"}
+#A nice endpoint to unload the current model without restarting the server.
+@app.post("/api/kill")
+async def kill_model():
+    async with models.clients.generation_lock:
+        killed_model = Model_Managed.current_model_id
+        await asyncio.to_thread(Model_Managed.stop_active_server)
+    return {"unloaded": killed_model}
 
 @app.get("/api/ps")
 async def get_processes():
@@ -182,10 +189,18 @@ async def chat_completions(request: OpenAIChatRequest):
     )
     
 
+class NoSignalServer(uvicorn.Server):
+    def install_signal_handlers(self):
+        pass  # we're installing our own below instead
+
+def handle_sigint(signum, frame):
+    print("\n[SIGINT] Force-killing model server before shutdown...")
+    Model_Managed.stop_active_server()
+    sys.exit(0)
+
 if __name__ == "__main__":
-    # If on Windows, bind to localhost. If on Linux (Debian), bind to 0.0.0.0
-    # so the Docker container can route through the bridge interface.
     host_ip = "127.0.0.1" if sys.platform == "win32" else "0.0.0.0"
-    
     print(f"Starting server on {host_ip}:8000...")
-    uvicorn.run("main:app", host=host_ip, port=8000, reload=False)
+    signal.signal(signal.SIGINT, handle_sigint)
+    config = uvicorn.Config("main:app", host=host_ip, port=8000, reload=False)
+    NoSignalServer(config).run()
