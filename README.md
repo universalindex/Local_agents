@@ -106,8 +106,7 @@ docker compose up -d
 This boots:
 - **SearXNG** — local metasearch engine (`http://localhost:8080`)
 - **Open WebUI** — web frontend (`http://localhost:3000`)
-- **Kokoro**- TTS backend (`http://localhost:8880`)
-- **Speaches**- STT backend (`http://localhost:8001`)
+- **Speaches**- STT/TTS backend (`http://localhost:8001`)
 
 ### 4. Configure STT TTS and custom open web UI functions
 
@@ -266,11 +265,18 @@ To set this up first first set the openweb-ui audio page to look EXACTLY at foll
 
 Then procede to `http://localhost:8001/docs` to download your stt model, the eaiset way I found to do this was through the /docs endpoint tester. You could probbably write a function for openweb UI to do it too, but since you only have to do this once I figured these directons were good enough.
 
-Locate the "/v1/models/{model_id} Download Remote Model" feild and use the test/try endpoint button to request Systran/faster-whisper-small This downloads the model.
-Next run the same model in the "/v1/models/{model_id} Get Local Model" feild
+Locate the "/v1/models/{model_id} Download Remote Model" feild and use the test/try endpoint button to request "Systran/faster-whisper-small" This downloads the model.
+Next run the same model in the "/v1/models/{model_id} Get Local Model" feild to make it available to the engine
 
-To test it worked run /v1/audio/models List Local Audio Models. If it gives your model then a long list of language prefixes it's ready. 
+To test it worked run /v1/audio/models List Local Audio Models. If it gives your models then a long list of language prefixes it's ready. 
+
+Repeat this process then with the speaches-ai/Kokoro-82M-v1.0-ONNX model using both download remote and get local model.
+
+To see a list of other voices you can use the  /v1/audio/voices List Local Audio Voices endpoint 
+
 Save your open web UI setting and **IMPORTANT** close and reload your docker containers. Open web UI doesn't activate these settings until you kill its docker container completely and reload. Why? I have no idea.
+
+
 
 
 ## Open web UI-get active model and Kill model -Requires manual setup
