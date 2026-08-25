@@ -13,16 +13,7 @@ TOOL_PAIR_RE = re.compile(
     r'(?P<result>.*?)\n\n</details>\n\n',
     re.DOTALL,
 )
-
 def canonicalize_history(messages: list[dict]) -> list[dict]:
-    """
-    Rebuilds assistant turns that contain injected <details> tool cards
-    back into the structured assistant(tool_calls)+tool(...) messages the
-    engine actually cached. Open WebUI only ever sees the flattened
-    markdown version and resends that on the next message, which is a
-    different prompt shape than what's cached — this undoes the flattening
-    so the prefix matches again.
-    """
     rebuilt = []
     for msg in messages:
         content = msg.get("content")
@@ -34,10 +25,12 @@ def canonicalize_history(messages: list[dict]) -> list[dict]:
         matches = list(TOOL_PAIR_RE.finditer(content))
         pos, i = 0, 0
         while i < len(matches):
-            # group consecutive tool calls with nothing but whitespace
-            # between them — that's a parallel tool-call batch from one
-            # completion, and needs to be ONE assistant message with
-            # multiple tool_calls, not several separate ones
+            # 1. CAPTURE LEADING / INTERSTITIAL TEXT (Fixes text deletion)
+            leading_text = content[pos:matches[i].start()].strip()
+            if leading_text:
+                rebuilt.append({"role": "assistant", "content": leading_text})
+
+            # 2. Group consecutive tool calls
             group = [matches[i]]
             j = i + 1
             while j < len(matches) and \
@@ -47,7 +40,7 @@ def canonicalize_history(messages: list[dict]) -> list[dict]:
 
             rebuilt.append({
                 "role": "assistant",
-                "content": "",
+                "content": None,
                 "tool_calls": [
                     {
                         "id": m.group("id"),
@@ -67,10 +60,13 @@ def canonicalize_history(messages: list[dict]) -> list[dict]:
 
             pos, i = group[-1].end(), j
 
+        # 3. Capture trailing text after the last tool call
         trailing = content[pos:].strip()
         if trailing:
             rebuilt.append({"role": "assistant", "content": trailing})
+            
     return rebuilt
+
 
 def filter_android_studio_tools(data):
     if "tools" in data and isinstance(data["tools"], list):
