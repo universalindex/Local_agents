@@ -26,7 +26,6 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                     stop=["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
                     temperature=0.7,
                     max_tokens=matching_model.context,
-                    extra_body={"thinking_budget_tokens": 256},
                     stream_options={"include_usage": True}
                 )
 
