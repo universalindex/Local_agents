@@ -95,7 +95,7 @@ conda activate local_agents
 cp .env.example .env
 ```
 
-Edit `.env` to set your model paths, engine binaries, and PDF directory. See the [`.env` Configuration](#env-configuration) section below for details.
+Edit `.env` to set your model paths, engine binaries, tavliey api key and PDF directory. See the [`.env` Configuration](#env-configuration) section below for details.
 
 ### 3. Start infrastructure
 
@@ -104,7 +104,7 @@ docker compose up -d
 ```
 
 This boots:
-- **SearXNG** — local metasearch engine (`http://localhost:8080`)
+- **SearXNG** — local metasearch engine (`http://localhost:8080`) --Now turned off due to bot blocking; Taviley is the new default but you can uncomment for docker if you want
 - **Open WebUI** — web frontend (`http://localhost:3000`)
 - **Speaches**- STT/TTS backend (`http://localhost:8001`)
 
@@ -179,8 +179,11 @@ MODELS='[
     "context": 2048
   }
 ]'
-pdf_directory=/home/user/documents/pdfs
+pdf_directory="/home/user/documents/pdfs"
+
+TAVILY_API_KEY= "whatever your api keyis"
 ```
+You can sign up for the free tier of tavily here `https://www.tavily.com/`
 
 ### Custom PDF Index (Optional)
 

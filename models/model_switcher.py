@@ -27,6 +27,7 @@ class LocalModel(BaseModel):
 class AppSettings(BaseSettings):
     MODELS: list[LocalModel]
     pdf_directory: str
+    tavily_api_key: str
     # This line triggers the automatic JSON decoder!
     model_config = SettingsConfigDict(env_file=".env")
 

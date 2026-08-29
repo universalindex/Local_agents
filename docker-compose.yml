@@ -1,24 +1,24 @@
 ﻿services:
-  searxng:
-    container_name: searxng
-    image: searxng/searxng:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      # Mounts your existing massive configuration directory
-      - ./searxng-data:/etc/searxng:rw
-    environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
-      - SEARXNG_LIMITER=false
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    networks:
-      - ai-network
-    restart: unless-stopped
+  #searxng:
+   # container_name: searxng
+   # image: searxng/searxng:latest
+#    ports:
+#      - "8080:8080"
+#    volumes:
+#      # Mounts your existing massive configuration directory
+#      - ./searxng-data:/etc/searxng:rw
+#    environment:
+#      - SEARXNG_BASE_URL=http://localhost:8080/
+#      - SEARXNG_LIMITER=false
+#    healthcheck:
+#      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/healthz"]
+#      interval: 30s
+#      timeout: 5s
+#      retries: 3
+#      start_period: 15s
+#    networks:
+#      - ai-network
+#    restart: unless-stopped
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
