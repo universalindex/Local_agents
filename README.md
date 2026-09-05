@@ -14,7 +14,7 @@ A Python-based local LLM orchestration layer that connects IDEs and web frontend
 │  Other UIs   │────▶│  :8000                       │────▶│  :8081       │
 └──────────────┘     │                              │     └──────────────┘
                      │  Agent Loop (tool execution) │
-                     │  Web Search (SearXNG)        │     ┌──────────────┐
+                     │  Web Search (Searxng/taivly) │     ┌──────────────┐
                      │  PDF Search / Read           │────▶│  SearXNG     │
                      │                              │     │  :8080       │
                      └──────────────────────────────┘     └──────────────┘
@@ -183,7 +183,7 @@ pdf_directory="/home/user/documents/pdfs"
 
 TAVILY_API_KEY= "whatever your api keyis"
 ```
-You can sign up for the free tier of tavily here `https://www.tavily.com/`
+You can sign up for the free tier of tavily here `https://www.tavily.com/` you do not need to add any credit card information for the free tier.
 
 ### Custom PDF Index (Optional)
 

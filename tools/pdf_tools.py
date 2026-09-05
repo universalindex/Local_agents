@@ -424,7 +424,7 @@ def read_pdf_page(file_path: str, page_number: int) -> str:
         page = doc[page_number - 1]
         
         # Extract standard text block
-        text = page.get_text() or ""
+        text = page.get_text() or ""  #if there are ever issues with this there is a pymupdf_layout library that will improve results (for multi column stuff)
         
         # Detect and transform tables to explicit Key-Value structures
         try:
@@ -457,6 +457,9 @@ def read_pdf_page(file_path: str, page_number: int) -> str:
         
     except Exception as e:
         return f"Failed to read PDF page: {str(e)}"
+    finally:
+        if 'doc' in locals():
+            doc.close()
     
 def sanitize_page_number(page_input):
     if isinstance(page_input, int):
