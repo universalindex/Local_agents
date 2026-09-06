@@ -12,7 +12,7 @@ import tools.pdf_tools
 #Some static varibles for the agent loop mostly just setting things to be the same everywhere
 pdf_directory = models.model_switcher.AppSettings().pdf_directory
 engine_client = models.clients.llama_cpp_client
-async def agent_loop(matching_model, combined_tools, middleware_tool_names, current_messages, android_studio):
+async def agent_loop(matching_model, combined_tools, middleware_tool_names, current_messages, android_studio, raw_request):
         try:
             print("[OUTBOUND] Dispatching to LLM server (Waiting for response...)")
 
@@ -32,8 +32,14 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                 active_tool_calls = {}
                 is_tool_call = False
                 tool_chunk_buffer = []
+                chunk_count = 0
 
                 async for chunk in response:
+                    chunk_count += 1
+                    if chunk_count % 20 == 0 and await raw_request.is_disconnected():
+                       print("[LOG] Client disconnected mid-stream, abandoning generation.")
+                       break
+
                     if not chunk.choices:
                         clean_chunk = chunk.model_dump(exclude_none=True)
                         if "usage" in clean_chunk:

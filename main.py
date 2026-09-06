@@ -4,7 +4,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any, Union
 from agent_loop import agent_loop
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
@@ -35,7 +35,7 @@ AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant
 
 
 engine_client = models.clients.llama_cpp_client
-
+  
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup Phase: Everything before 'yield' runs when the server boots.
@@ -101,7 +101,7 @@ async def get_processes():
 
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
-async def chat_completions(request: OpenAIChatRequest):
+async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
     initial_history, Android_studio = tools.cleaning.strip_ide_bloat(
         [m.model_dump(exclude_none=True) for m in request.messages]
     )
@@ -186,7 +186,7 @@ async def chat_completions(request: OpenAIChatRequest):
     middleware_tool_names = [t["function"]["name"] for t in MIDDLEWARE_TOOLS]
     combined_tools = inbound_tools + MIDDLEWARE_TOOLS
     return StreamingResponse(
-        agent_loop(matching_model, combined_tools, middleware_tool_names, agent_history, Android_studio),
+        agent_loop(matching_model, combined_tools, middleware_tool_names, agent_history, Android_studio, raw_request),
         media_type="text/event-stream"
     )
     
