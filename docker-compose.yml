@@ -1,5 +1,4 @@
 ﻿services:
-# SearXNG search engine (commented out) 
   #searxng:
    # container_name: searxng
    # image: searxng/searxng:latest

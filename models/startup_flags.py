@@ -73,8 +73,6 @@ def open_api(Model_Managed):
                         "quantization_level": "unknown"
                     },
                     "expires_at": "2099-01-01T00:00:00Z",
-                    "size_vram": 0,
-                    "status": "loaded",
-                    "model": matching_model.display_name,
+                    "size_vram": 0
                 })
         return {"models": running}
