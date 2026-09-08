@@ -172,7 +172,7 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                     "tool_calls": assistant_tool_calls_payload
                 })
                 # Recurse to generate the final response or handle follow-up tools
-                async for chunk in agent_loop(matching_model, combined_tools, middleware_tool_names, current_messages, android_studio):
+                async for chunk in agent_loop(matching_model, combined_tools, middleware_tool_names, current_messages, android_studio, raw_request):
                     yield chunk
             else:
                 yield "data: [DONE]\n\n"
