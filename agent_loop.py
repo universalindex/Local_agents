@@ -68,7 +68,8 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                                 active_tool_calls[idx]["name"] += tc.function.name
                             if tc.function.arguments: 
                                 active_tool_calls[idx]["arguments"] += tc.function.arguments
-                    if delta.content is not None or delta.role is not None:
+
+                    if delta.content is not None or delta.role is not None or getattr(delta, "reasoning_content", None) is not None:
                         clean_chunk = chunk.model_dump(exclude_none=True)
                         if "tool_calls" in clean_chunk["choices"][0]["delta"]:
                             del clean_chunk["choices"][0]["delta"]["tool_calls"]
