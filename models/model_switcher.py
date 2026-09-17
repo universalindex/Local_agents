@@ -172,7 +172,6 @@ class VramModelManager:
                     pass
 
                 time.sleep(1)
-                self.current_model_id = matching_model.display_name
                 
             
 

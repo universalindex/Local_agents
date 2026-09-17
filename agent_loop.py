@@ -96,7 +96,7 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                     print(f"[TOOL ROUTING] Running '{f_name}'")
 
                     # Send visual card to Open WebUI
-                    ui_msg = f'\n\n<details data-tool-id="{t_id}">\n<summary> <b>Tool called:</b> <code>{f_name}</code></summary>\n\n```json\n{f_args}\n```\n</details>\n\n'
+                    ui_msg = f'\n\n<details data-tool-id="{t_id}">\n<summary> Tool called:{f_name}</summary>\n\n```json\n{f_args}\n```\n</details>\n\n'
                     ui_chunk = {
                         "id": "chatcmpl-middleware",
                         "object": "chat.completion.chunk",
@@ -139,7 +139,7 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                     # Update Open WebUI with output details
                     ui_result = (
                         f'<details data-tool-id="{t_id}">\n'
-                        f"<summary><b>Tool Result: {f_name}</b></summary>\n\n"
+                        f"<summary>Tool Result: {f_name}</summary>\n\n"
                         f"{tool_result_content}\n\n"
                         f"</details>\n\n"
                     )
