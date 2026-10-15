@@ -112,6 +112,8 @@ class VramModelManager:
             args_list = []
             if matching_model.special_arguments:
                 args_list = shlex.split(matching_model.special_arguments)
+            if matching_model.mmproj and matching_model.engine == "llama.cpp" and matching_model.special_arguments:
+                args_list = shlex.split(matching_model.special_arguments + f" --mmproj \"{matching_model.mmproj}\"")
 
             if matching_model.engine == "llama.cpp":
                 cmd = [
