@@ -40,7 +40,6 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                 is_tool_call = False
                 last_finish = None
                 turn_text = ""
-                tool_chunk_buffer = []
                 chunk_count = 0
 
                 async for chunk in response:
@@ -59,8 +58,6 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                         last_finish = chunk.choices[0].finish_reason
                     if delta.tool_calls:
                         is_tool_call = True
-                        clean_tool_chunk = chunk.model_dump(exclude_none=True)
-                        tool_chunk_buffer.append(json.dumps(clean_tool_chunk))
                         
                         # Process all tool calls present in this chunk
                         for tc in delta.tool_calls:
@@ -92,27 +89,33 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                             yield f"data: {json.dumps(clean_chunk)}\n\n"
 
             if is_tool_call:
+                tools_for_middleware = []
+                tools_for_interface = []
                 assistant_tool_calls_payload = []
-                
-                # Process each gathered tool call in order
                 for idx, tc_data in sorted(active_tool_calls.items()):
                     f_name = tc_data["name"]
                     f_args = tc_data["arguments"]
                     t_id = tc_data["id"]
-
-                    print(f"\n[TOOL TRIGGERED] Index {idx}: '{f_name}'")
-
-                    # If this is a tool meant for the IDE/VS Code and not our middleware
+ 
                     if f_name not in middleware_tool_names:
-                        print(f"[PASSTHROUGH] f_name={f_name!r} middleware={middleware_tool_names}")
-                        for buffered_chunk in tool_chunk_buffer:
-                           yield f"data: {buffered_chunk}\n\n"
-                        yield finish_chunk("tool_calls")
-                        yield "data: [DONE]\n\n"
-                        return
+                        tools_for_interface.append({
+                            "id": t_id,
+                            "type": "function",
+                            "function": {"name": f_name, "arguments": f_args}
+                        })
+                    else:
+                        tools_for_middleware.append({
+                            "id": t_id,
+                            "type": "function",
+                            "function": {"name": f_name, "arguments": f_args}
+                        })
 
+                for tool in tools_for_middleware:
+                    f_name = tool["function"]["name"]
+                    f_args = tool["function"]["arguments"]
+                    t_id = tool["id"]
                     print(f"[TOOL ROUTING] Running '{f_name}'")
-
+                    
                     try:
                         args_dict = json.loads(f_args)
                         card_args = f_args
@@ -120,10 +123,6 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                         args_dict = {}
                         card_args = "{}"
 
-                    try:
-                        args_dict = json.loads(f_args)
-                    except json.JSONDecodeError:
-                        args_dict = {}
 
                     # Execute the specific tool
                     tool_result_content = ""
@@ -163,7 +162,7 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                     ui_chunk = {"id": "chatcmpl-middleware", "object": "chat.completion.chunk", "model": "default",
                                 "choices": [{"index": 0, "delta": {"content": details_block}, "finish_reason": None}]}
                     yield f"data: {json.dumps(ui_chunk)}\n\n"
-                   
+                    
 
                     # Collect the tool metadata to return to the LLM context
                     assistant_tool_calls_payload.append({
@@ -179,9 +178,23 @@ async def agent_loop(matching_model, combined_tools, middleware_tool_names, curr
                         "tool_call_id": t_id, 
                         "content": tool_result_content
                     })
+                    
+                if tools_for_interface:
+                    for new_idx, call in enumerate(tools_for_interface):
+                        tc_chunk = {"id": "chatcmpl-proxy", "object": "chat.completion.chunk", "model": "default",
+                                    "choices": [{"index": 0,
+                                                 "delta": {"tool_calls": [{"index": new_idx, **call}]},
+                                                 "finish_reason": None}]}
+                        yield f"data: {json.dumps(tc_chunk)}\n\n"
+                    yield finish_chunk("tool_calls")
+                    yield "data: [DONE]\n\n"
+                    return
+                
+                    
 
-                # Append the assistant block containing ALL the calls we executed
-                current_messages.insert(-len(active_tool_calls), {
+                    
+                # Append the assistant block containing our the calls we executed
+                current_messages.insert(-len(tools_for_middleware), {
                     "role": "assistant",
                     "content": turn_text, 
                     "tool_calls": assistant_tool_calls_payload

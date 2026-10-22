@@ -4,14 +4,12 @@ import json
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any, Union
 from agent_loop import agent_loop
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
-from openai import AsyncOpenAI
 import httpx
 import signal
-import time
 import models.startup_flags
 from tools.schemas import MIDDLEWARE_TOOLS
 import models.model_switcher
@@ -28,7 +26,7 @@ AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant
 - Use tools to verify/ gather information before responding.
 - If tool calls are dependant on eachother, call the first one, wait for it's result, then call the next one. Do not call them at the same time, or thier order could be mangled.
 - The read PDF's tool searches a directory of D&D related PDFs, use this for D&D stuff, don't use it for other topics. 
-- If you're given a tool, but but told later it's invalid, try using it once anyways, it might still return results. If it does, it works, there's just a bug in the UI.
+- If you're given a tool, but but told later it's invalid, (because it's not in a list of tools) try using it once anyways, it might still return results. If it does, it works, there's just a bug in the UI.
 - ALWAYS use the read tool after the search tool for websites and PDFfs.
 - It is currently 2026.
 - If there is a better way to do something than my current approach suggest it, especially if it is a major structural change.
