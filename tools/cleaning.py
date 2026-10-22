@@ -1,36 +1,57 @@
 from typing import Dict, List, Any
 import re
+import html
+import json
 
 
 import tools.schemas
 
-TOOL_PAIR_RE = re.compile(
-    r'\n\n<details data-tool-id="(?P<id>[^"]+)">\n'
-    r'<summary> <b>Tool called:</b> <code>(?P<name>[^<]+)</code></summary>\n\n'
-    r'```json\n(?P<args>.*?)\n```\n</details>\n\n'
-    r'<details data-tool-id="(?P=id)">\n'
-    r'<summary><b>Tool Result: (?P=name)</b></summary>\n\n'
-    r'(?P<result>.*?)\n\n</details>\n\n',
+TOOL_BLOCK_RE = re.compile(
+    r'<details\s+type="tool_calls"(?P<attrs>[^>]*)>\s*'
+    r'<summary>[^<]*</summary>\n?(?P<body>.*?)\n?</details>',
     re.DOTALL,
 )
+ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
+def _parse_tool_block(m, n):
+    attrs = {k: html.unescape(v) for k, v in ATTR_RE.findall(m.group("attrs"))}
+    raw = attrs.get("result")
+    if raw is None:
+        raw = html.unescape(m.group("body"))
+    try:
+        result = json.loads(raw)
+        if not isinstance(result, str):
+            result = json.dumps(result, ensure_ascii=False)
+    except ValueError:
+        result = raw
+    return {
+        "id": attrs.get("id") or f"call_{n}",
+        "name": attrs.get("name", ""),
+        "arguments": attrs.get("arguments") or "{}",
+        "result": result,
+    }
+
+
 def canonicalize_history(messages: list[dict]) -> list[dict]:
     rebuilt = []
+    n = 0
     for msg in messages:
         content = msg.get("content")
         if msg.get("role") != "assistant" or not isinstance(content, str) \
-                or "<details data-tool-id=" not in content:
+                or 'type="tool_calls"' not in content:
             rebuilt.append(msg)
             continue
 
-        matches = list(TOOL_PAIR_RE.finditer(content))
+        matches = list(TOOL_BLOCK_RE.finditer(content))
+        if not matches:
+            rebuilt.append(msg)
+            continue
+
         pos, i = 0, 0
         while i < len(matches):
-            # 1. CAPTURE LEADING / INTERSTITIAL TEXT (Fixes text deletion)
-            leading_text = content[pos:matches[i].start()].strip()
-            if leading_text:
-                rebuilt.append({"role": "assistant", "content": leading_text})
+            # Text before this tool group becomes that message's content
+            # (no separate assistant message, so no adjacent assistants)
+            lead = content[pos:matches[i].start()].strip()
 
-            # 2. Group consecutive tool calls
             group = [matches[i]]
             j = i + 1
             while j < len(matches) and \
@@ -38,33 +59,36 @@ def canonicalize_history(messages: list[dict]) -> list[dict]:
                 group.append(matches[j])
                 j += 1
 
+            parsed = []
+            for m in group:
+                n += 1
+                parsed.append(_parse_tool_block(m, n))
+
             rebuilt.append({
                 "role": "assistant",
-                "content": None,
+                "content": lead,
                 "tool_calls": [
-                    {
-                        "id": m.group("id"),
-                        "type": "function",
-                        "function": {"name": m.group("name"), "arguments": m.group("args")},
-                    }
-                    for m in group
+                    {"id": p["id"], "type": "function",
+                     "function": {"name": p["name"], "arguments": p["arguments"]}}
+                    for p in parsed
                 ],
             })
-            for m in group:
+            for p in parsed:
                 rebuilt.append({
                     "role": "tool",
-                    "name": m.group("name"),
-                    "tool_call_id": m.group("id"),
-                    "content": m.group("result"),
+                    "name": p["name"],
+                    "tool_call_id": p["id"],
+                    "content": p["result"],
                 })
-
             pos, i = group[-1].end(), j
 
-        # 3. Capture trailing text after the last tool call
         trailing = content[pos:].strip()
-        if trailing:
-            rebuilt.append({"role": "assistant", "content": trailing})
-            
+        orig_calls = msg.get("tool_calls")
+        if trailing or orig_calls:
+            tail = {"role": "assistant", "content": trailing}
+            if orig_calls:
+                tail["tool_calls"] = orig_calls
+            rebuilt.append(tail)
     return rebuilt
 
 

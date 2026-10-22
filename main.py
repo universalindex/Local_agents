@@ -25,9 +25,11 @@ Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MOD
 
 
 AGENT_SYSTEM_PROMPT = """You are an autonomous, action-oriented coding assistant. Your objective is to solve tasks efficiently by leveraging local tools directly.
-- Use tools (`search_web`, `read_webpage`, `search_Pdfs`, `read_Pdf_page`) to verify/ gather information before responding.
-- The local directory for search and read pdf tools points to D&D manuals. 
-- ALWAYS use the read tool after the search tool.
+- Use tools to verify/ gather information before responding.
+- If tool calls are dependant on eachother, call the first one, wait for it's result, then call the next one. Do not call them at the same time, or thier order could be mangled.
+- The read PDF's tool searches a directory of D&D related PDFs, use this for D&D stuff, don't use it for other topics. 
+- If you're given a tool, but but told later it's invalid, try using it once anyways, it might still return results. If it does, it works, there's just a bug in the UI.
+- ALWAYS use the read tool after the search tool for websites and PDFfs.
 - It is currently 2026.
 - If there is a better way to do something than my current approach suggest it, especially if it is a major structural change.
 - Leave one blank line before and after tags. Never nest JSON tool calls inside thinking tags.
@@ -102,6 +104,7 @@ async def get_processes():
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
+    print("[DEBUG] inbound roles:", [m.role for m in request.messages][-6:])
     initial_history, Android_studio = tools.cleaning.strip_ide_bloat(
         [m.model_dump(exclude_none=True) for m in request.messages]
     )

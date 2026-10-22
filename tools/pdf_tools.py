@@ -2,8 +2,9 @@ import os
 import re
 import fitz  # PyMuPDF
 import json
+import sys
  
-DEBUG = False  # set False to silence [DEBUG] lines once things are working
+DEBUG = True  # set False to silence [DEBUG] lines once things are working
  
 _PDF_MEMORY_CACHE = None      # filename -> [page_text, page_text, ...] (0-indexed list)
 _CUSTOM_INDEX_CACHE = None    # keyword -> {"pages": [...], "see_also": [...], "subs": {...}}
@@ -14,7 +15,7 @@ Boring = False
  
 def _log(msg):
     if DEBUG:
-        print(f"[DEBUG] {msg}")
+        print(f"[DEBUG] {msg}", file=sys.stderr)
  
  
 def _get_or_build_index(directory_path: str):
@@ -61,7 +62,7 @@ def _get_or_build_index(directory_path: str):
  
             new_cache[filename] = pages_data
             doc.close()
-            print(f"Indexed: {filename}")
+            print(f"Indexed: {filename}", file=sys.stderr)
         except Exception as e:
             print(f"Failed to index {filename}: {e}")
  
@@ -241,6 +242,9 @@ def _snippet_from_text(page_text: str, keywords, context_chars=250) -> str:
  
  
 def search_pdfs(query: str, directory_path: str) -> str:
+    '''
+    Searches the local pdf directory (Using the indexes if applicable) for the query and returns the results
+    '''
     # 1. Clean query and prepare tokens
     query_clean = re.sub(r'\s+', ' ', query).lower().strip()
     query_parts = [p for p in query_clean.split() if len(p) > 2]
@@ -408,6 +412,7 @@ def read_pdf_page(file_path: str, page_number: int) -> str:
     Reads a specific PDF page, fixing 1-indexed boundary limits 
     and converting tables into an explicit Key-Value format optimized for small LLMs.
     """
+    print(f"[DEBUG] native read_pdf_page: file_path={file_path}, page_number={page_number}", file=sys.stderr)
     if not os.path.exists(file_path):
         return f"Error: File '{file_path}' not found."
     
