@@ -1,3 +1,4 @@
+from  models.startup_flags import DEBUG  # set False to silence [DEBUG] lines once things are working
 import subprocess
 from typing import Optional
 import psutil
@@ -12,6 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import threading
+#Your IDE might say some of these imports are unused, but they are actually neccesary or thigns get handed peices they don't understand and it crashes
 
 
 class LocalModel(BaseModel):
@@ -99,7 +101,8 @@ class VramModelManager:
                         print("[LOG] Engine is already running. Bypassing launch.")
                         return
             except Exception as e:
-                print(f"\n[DIAGNOSTIC] Bypass ping failed! Reason: {type(e).__name__} - {str(e)}")
+                if DEBUG:
+                    print(f"\n[DIAGNOSTIC] Bypass ping failed! Reason: {type(e).__name__} - {str(e)}")
                 pass
 
             self.stop_active_server()

@@ -1,5 +1,6 @@
 import json
 import asyncio
+from models.startup_flags import DEBUG  # set False to silence [DEBUG] lines once things are working
 import models.clients
 import tools.tool_defs
 import models.model_switcher
@@ -16,8 +17,10 @@ pdf_directory = models.model_switcher.AppSettings().pdf_directory
 engine_client = models.clients.llama_cpp_client
 async def agent_loop(matching_model, combined_tools, middleware_tool_names, current_messages, android_studio, raw_request):
         try:
+
             print("[OUTBOUND] Dispatching to LLM server (Waiting for response...)")
-            print("[DEBUG] to model:", len(current_messages), [
+            if DEBUG:
+                print("[DEBUG] to model:", len(current_messages), [
     (m["role"], bool(m.get("tool_calls")),
      (m["content"][:80] if isinstance(m.get("content"), str) else type(m.get("content")).__name__))
     for m in current_messages[-3:]

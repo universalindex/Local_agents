@@ -1,4 +1,5 @@
 import time
+DEBUG = True
 def ollama_flags(Model_Managed):
         """Mocks the Ollama endpoint for Open WebUI and IDEs expecting an Ollama backend."""
         ollama_models = []

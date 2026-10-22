@@ -17,6 +17,7 @@ import tools.cleaning
 import asyncio
 import sys
 import models.clients
+from  models.startup_flags import DEBUG  # set False to silence [DEBUG] lines once things are working
 #Setting up paths and model manager, don't forget to update your .env file.
 Model_Managed = models.model_switcher.VramModelManager(models.model_switcher.MODEL_LIST)
 
@@ -102,7 +103,8 @@ async def get_processes():
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
-    print("[DEBUG] inbound roles:", [m.role for m in request.messages][-6:])
+    if DEBUG:
+        print("[DEBUG] inbound roles:", [m.role for m in request.messages][-6:])
     initial_history, Android_studio = tools.cleaning.strip_ide_bloat(
         [m.model_dump(exclude_none=True) for m in request.messages]
     )
@@ -128,7 +130,8 @@ async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
                 await asyncio.sleep(1.0)
 
     if not request.stream:
-        print("[LOG] Non-streaming request detected. Routing to model.")
+        if DEBUG:
+            print("[LOG] Non-streaming request detected. Routing to model.")
         async with models.clients.generation_lock:
             response = await engine_client.chat.completions.create(
                 model=matching_model.name,
@@ -138,13 +141,16 @@ async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
                 temperature=0.7,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}}
             )
-        print(f"[TITLE DEBUG] content={response.choices[0].message.content!r} reasoning={getattr(response.choices[0].message, 'reasoning_content', None)!r}")
+        if DEBUG:
+            print(f"[TITLE DEBUG] content={response.choices[0].message.content!r} reasoning={getattr(response.choices[0].message, 'reasoning_content', None)!r}")
         return response
     if Android_studio:
-        print("[LOG] Trimming Android Studio native tools down to save NPU context.")
+        if DEBUG:
+            print("[LOG] Trimming Android Studio native tools down to save NPU context.")
         inbound_tools = tools.cleaning.filter_android_studio_tools({"tools": inbound_tools})["tools"]
     if is_ide_request:
-        print(f"[LOG] Direct IDE Passthrough Route triggered for: {matching_model.name}")
+        if DEBUG:
+            print(f"[LOG] Direct IDE Passthrough Route triggered for: {matching_model.name}")
         async def ide_passthrough():
             try:
                 async with models.clients.generation_lock:
@@ -171,7 +177,6 @@ async def chat_completions(request: OpenAIChatRequest, raw_request: Request):
             print("[LOG] Updating system prompt content to match hardcoded Agent Prompt.")
             request.messages[0].content = AGENT_SYSTEM_PROMPT
     else:
-        print("[LOG] No system prompt found at index 0. Injecting hardcoded Agent Prompt.")
         request.messages.insert(0, OpenAIMessage(
             role="system",
             content=AGENT_SYSTEM_PROMPT
