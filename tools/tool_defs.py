@@ -34,7 +34,6 @@ async def search_web(query):
 """
 
 async def search_web(query):
-    print(f"[DEBUG] Performing native web search for query: {query}")
     try:
         tavily_url = "https://api.tavily.com/search"
         headers = {"Authorization": f"Bearer {TAVILY_API_KEY}"}
