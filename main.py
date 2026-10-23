@@ -77,6 +77,11 @@ class OpenAIChatRequest(BaseModel):
 async def get_tags():
     return models.startup_flags.ollama_flags(Model_Managed)
 
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.get("/models")
 @app.get("/v1/models")
 @app.get("/api/flags")
